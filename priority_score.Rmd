@@ -99,7 +99,14 @@ numextract <- function(string){
   as.numeric(str_extract(string, "\\-*\\d+\\.*\\d*"))
 } 
 
-
+comma <- function(x){
+  case_when(
+    abs(x) > 10 ~ format(x, digits = 0, big.mark = ",", scientific = F),
+    abs(x) > 1 ~ format(x, digits = 2, big.mark = ",", scientific = F),
+    TRUE ~ format(x, digits = 2, big.mark = ",", scientific = F)
+  )
+    
+}
 ```
 
 ## Data source
@@ -180,7 +187,7 @@ set.seed(12345)
 tot_patients <- 1000 
 max_life_span <- 100
 
-simulate_ICU_pop <- function(df, N = tot_patients, sd_prob =1){
+simulate_ICU_pop <- function(df, N = tot_patients, sd_prob = 1.5){
   probs <- df$pct_icu_pop
   
   age_cats <- multinomRob::rmultinomial(n = N, pr = probs)
@@ -204,6 +211,9 @@ simulate_ICU_pop <- function(df, N = tot_patients, sd_prob =1){
     
     
     # random (normal) distribution of individual survival probabilities
+    
+    #sd_prob <- sqrt(qnorm(subgroup$survival*(1-subgroup$survival)))
+    
     p_var <- rnorm(n = n_cats, mean= 0, sd = sd_prob)
     
     survival <- pnorm(qnorm(subgroup$survival) + p_var)
@@ -239,6 +249,16 @@ ggplot(aes(x = age_group)) + geom_histogram(stat = "count")
 ```
 
 
+## Simulated Survival by Age
+```{r}
+sim_pop %>%
+  group_by(age_group) %>%
+  summarise(survival = round(100*mean(alive))) %>%
+  ggplot(aes(x = age_group, y = survival)) + 
+  geom_bar(stat = "Identity") + lims(y  = c(0,100)) 
+```
+
+
 ## Lottery allocation
 ```{r}
 lottery_allocate <- function(sim_pop, num_vents){
@@ -253,7 +273,7 @@ lottery_allocate <- function(sim_pop, num_vents){
   return(allocate)
 }
 
-num_vents <- (sim_pop %>% nrow)/2
+num_vents <- (sim_pop %>% nrow)*0.5
 lottery_allocation <- lottery_allocate(sim_pop, num_vents)
 ```
 
@@ -277,12 +297,10 @@ life_years_saved <- function(allocation, max_life_span = 100){
   return(sum(df$life_left))
 }
 
-life_years_saved(lottery_allocation)
-
 pct_life_years_saved <- round(100*life_years_saved(lottery_allocation)/total_life_years)
 ```
 
-Random assigment of vents, ignoring age and $P(ICU\space survival)$. A lottery allocation of `r num_vents` ventilators would save `r lives_saved(lottery_allocation)` out of `r tot_patients` patients admitted to the ICU. A lottery saves `r life_years_saved(lottery_allocation)` out of a total of possible `r total_life_years` (`r pct_life_years_saved`%).
+Random assigment of vents, ignoring age and $P(ICU\space survival)$. A lottery allocation of `r num_vents` ventilators would save `r lives_saved(lottery_allocation)` out of `r tot_patients` patients admitted to the ICU. A lottery saves `r  comma(life_years_saved(lottery_allocation))` out of a total of possible `r comma(total_life_years)` (`r pct_life_years_saved`%).
 
 ## Maximizing ICU survival
 
@@ -309,7 +327,7 @@ max_icu_surv_allocation %>%
   geom_bar() + labs(x = "Age", fill = "")
 ```
 
-A ICU survival triage system of `r num_vents` ventilators would save `r lives_saved(max_icu_surv_allocation)` out of `r tot_patients` patients admitted to the ICU. A lottery saves `r life_years_saved(max_icu_surv_allocation)` out of a total of possible `r total_life_years` (`r round(100*life_years_saved(max_icu_surv_allocation)/total_life_years)`%).
+A ICU survival triage system of `r num_vents` ventilators would save `r lives_saved(max_icu_surv_allocation)` out of `r tot_patients` patients admitted to the ICU. Maximizing ICU survival saves `r comma(life_years_saved(max_icu_surv_allocation))` out of a total of possible `r comma(total_life_years)` (`r round(100*life_years_saved(max_icu_surv_allocation)/total_life_years)`%).
 
 
 ## Maximizing Life-years gained
@@ -336,9 +354,13 @@ max_life_year_allocation %>%
   geom_bar() + labs(x = "Age", fill = "")
 ```
 
-A life-year prioritization system of `r num_vents` ventilators would save `r lives_saved(max_life_year_allocation )` out of `r tot_patients` patients admitted to the ICU. Maximizing life-years gained saves `r life_years_saved(max_life_year_allocation )` out of a total of possible `r total_life_years` (`r round(100*life_years_saved(max_life_year_allocation)/total_life_years)`%).
+Prioritizing life-years for `r num_vents` ventilators would save `r lives_saved(max_life_year_allocation )` out of `r tot_patients` patients admitted to the ICU. Maximizing life-years gained saves `r comma(life_years_saved(max_life_year_allocation))` out of a total of possible `r comma(total_life_years)` (`r round(100*life_years_saved(max_life_year_allocation)/total_life_years)`%).
 
 
+## Maximizing life-years vs. ICU survival
+
+### The Tradeoff
+Prioritizing life-years gained over ICU survival saves an additional `r comma(life_years_saved(max_life_year_allocation) - life_years_saved(max_icu_surv_allocation))` life-years for this `r tot_patients` patient sample, at a cost of `r lives_saved(max_icu_surv_allocation) - lives_saved(max_life_year_allocation)` more deaths in the ICU. 
 
 
 ```{r,eval=FALSE}
