@@ -1,0 +1,5 @@
+*
+
+!.gitignore
+!*.Rmd
+.Rproj.user

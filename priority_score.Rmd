@@ -1,0 +1,386 @@
+---
+title: "Priority Score"
+output:
+  beamer_presentation:
+    toc: true
+    slide_level: 2
+    theme: "Berlin"
+    colortheme: "beaver"
+    latex_engine: xelatex
+    incremental: true
+    fig_width: 6
+    fig_height: 3
+    dev: "pdf"
+  html_notebook:
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, cache = TRUE, dev = 'pdf')
+```
+
+```{r libraries, include=FALSE, cache=FALSE}
+library(tidyverse)
+```
+
+# Theory
+
+## Military triage- save as many soldiers as possible
+
+In military triage situations, a utilitarian framework is employed to save the greatest number of wounded soliders in a mass casualty event
+
+1. Identify patients who will survive without critical care (Green)
+2. Exclude patients who obviously will not survive with critical care (Blue)
+3. Rank order patients who will die without critical care by $P(ICU\space Survival)$ (Red > Yellow)
+4. Treat as many patients as possible in order of $P(ICU\space Survival)$
+
+
+## Problems with military triage approach in the COVID-19 Pandemic 
+
+![](three_patients.jpg)
+
+Not everyone is a young solider...$P(ICU\space Survival)$ ignores the potential life-span of the patient!
+
+## New York ventilator allocation policy
+
+![](ny_ranks.jpg)
+
+Goes against "youngest first" allocation principles.
+
+## Maximizing life-years gained
+
+An alternative **utilitarian** approach is to maximize life-years gained
+
+### Priority Score that maximizes life-years gained
+$$ Priority \space Score = P(ICU\space Survival)*(100-age) $$
+
+
+
+## Priority Score vs. Patient Age, by Probability of ICU Survival
+```{r}
+life_span_max <- 100 
+
+tibble(
+  age = seq(18, 100),
+  prob_25 = 0.25,
+  prob_50 = 0.5,
+  prob_75 = 0.75
+) %>%
+  pivot_longer(cols = -age, names_to = "ICU Survival (%)", names_prefix = "prob_" ) %>%
+  mutate(priority_score = value*(life_span_max - age)) %>%
+  ggplot(aes(x = age, y = priority_score, color = `ICU Survival (%)`)) +
+  geom_line()
+```
+
+## Range of possible priority scores by patient age
+
+```{r}
+expand.grid(seq(20,100, 10), seq(0,1,0.01)) %>%
+  rename(Age = Var1, Prob = Var2) %>%
+  mutate(priority_score = Prob*(life_span_max - Age)) %>%
+  group_by(Age) %>%
+  summarize(max_score = max(priority_score),
+            min_score = min(priority_score)) %>%
+  ggplot(aes(x = Age, ymin = min_score, ymax = max_score, y = max_score)) +
+  geom_errorbar() +
+  geom_line(aes(color = "Maximum score")) + 
+  ggrepel::geom_label_repel(aes(label = max_score), color = "red") + 
+  labs(y = "Priority Score", color = "")
+
+```
+
+# Simulation using CDC data
+
+
+```{r}
+numextract <- function(string){ 
+  as.numeric(str_extract(string, "\\-*\\d+\\.*\\d*"))
+} 
+
+
+```
+
+## Data source
+We took data from the CDC report [Severe Outcomes Among Patients with Coronavirus Disease 2019  — United States, February 12–March 16, 2020](https://www.cdc.gov/mmwr/volumes/69/wr/mm6912e2.htm?s_cid=mm6912e2_w)
+
+![](cdc_age_dist.gif)
+
+
+```{r}
+cdc_data <- read_csv("cdc_data.csv") %>%
+  separate(`Age Group`, c("Age", "N"), sep = "\\s") %>%
+  mutate(N = numextract(N),
+         Age = factor(Age, levels = c("0–19", "20–44", "45–54",
+                                      "55–64", "65–74", "75–84",
+                                      "≥85")))
+```
+
+
+```{r}
+total_hosp <- sum(cdc_data$N)
+
+worst_case <- cdc_data %>%
+  select(Age,
+         N,
+         hosp = high_hosp,
+         icu = high_ICU,
+         dead = high_death) %>%
+  mutate(n_hosp = N*hosp/100,
+         n_icu = N*icu/100,
+         n_dead = N*dead/100)
+
+total_ICU <- sum(worst_case$n_icu)
+
+worst_case <- worst_case %>%
+  mutate(pct_icu_pop = n_icu/total_ICU,
+         survival = 1 - n_dead/n_icu) %>%
+  filter(Age != "0–19") %>%
+  mutate(
+    max_age = case_when(
+      Age == "20–44" ~ 44,
+      Age == "45–54" ~ 54,
+      Age == "55–64" ~ 64,
+      Age == "65–74" ~ 74,
+      Age == "75–84" ~ 84,
+      TRUE ~ 94
+    ),
+    min_age = case_when(
+      Age == "20–44" ~ 20,
+      Age == "45–54" ~ 45,
+      Age == "55–64" ~ 55,
+      Age == "65–74" ~ 65,
+      Age == "75–84" ~ 75,
+      TRUE ~ 85)
+  ) %>% 
+  mutate(survival = ifelse(survival < 0, 0, survival)) %>%
+  select(Age, min_age, max_age, pct_icu_pop, survival)
+```
+
+## COVID-19 Age Distribution of patients requiring ICU
+```{r}
+worst_case %>%
+  ggplot(aes(x = Age, y = 100*pct_icu_pop)) +
+  geom_bar(stat = "Identity") + labs(y = "Percentage (%)")
+```
+
+## COVID-19 ICU survival by Age in the US per the CDC
+```{r}
+worst_case %>%
+  ggplot(aes(x = Age, y = 100*survival)) +
+  geom_bar(stat = "Identity") + lims(y = c(0, 100))+ labs(y = "ICU survival (%)")
+```
+
+
+
+## Simulated ICU population
+```{r}
+
+tot_patients <- 1000 
+max_life_span <- 100
+
+simulate_ICU_pop <- function(df, N = tot_patients, sd_prob =1){
+  probs <- df$pct_icu_pop
+  
+  age_cats <- multinomRob::rmultinomial(n = N, pr = probs)
+  
+  sample <- tibble(age_group = character(),
+                   age = numeric(),
+                   alive = numeric(),
+                   dead = numeric(),
+                   p_surv = numeric())
+  
+  i <- 1
+  
+  for (n_cats in age_cats) {
+    
+    subgroup <- df[i,]
+    
+    # randomly sample ages from uniform distribution
+    min_age <- subgroup$min_age
+    max_age <- subgroup$max_age
+    age_sample <- runif(n = n_cats, min = min_age, max = max_age)
+    
+    
+    # random (normal) distribution of individual survival probabilities
+    p_var <- rnorm(n = n_cats, mean= 0, sd = sd_prob)
+    
+    survival <- pnorm(qnorm(subgroup$survival) + p_var)
+    
+    # sample actual survival outcomes
+    chance <- runif(n = n_cats)
+    
+    sub_sample <- tibble(age_group = subgroup$Age,
+                           age = age_sample) %>%
+      cbind(chance) %>%
+      mutate(age = round(age),
+             p_surv = as.numeric(survival),
+             alive = ifelse(chance < p_surv, 1, 0))
+    
+    sample <- sample %>% rbind(sub_sample)
+    
+    i <- i + 1
+  }
+  
+  return(sample %>% select(age_group, age, p_surv, alive))
+}
+
+sim_pop <- simulate_ICU_pop(worst_case)
+
+
+total_life_years <- sum(mutate(sim_pop, life_left = max_life_span - age)$life_left)
+```
+
+
+```{r}
+sim_pop %>%
+ggplot(aes(x = age_group)) + geom_histogram(stat = "count")
+```
+
+
+## Lottery allocation
+```{r}
+lottery_allocate <- function(sim_pop, num_vents){
+
+  lottery <- runif(n = sim_pop %>% nrow())
+  
+  allocate <- sim_pop %>%
+    cbind(lottery) %>%
+    arrange(lottery) %>%
+    mutate(get_vent = ifelse(row_number() <= num_vents, "ventilator", "pallative care"))
+  
+  return(allocate)
+}
+
+num_vents <- (sim_pop %>% nrow)/2
+lottery_allocation <- lottery_allocate(sim_pop, num_vents)
+```
+
+```{r}
+lottery_allocation %>%
+  ggplot(aes(x = age_group, fill = factor(get_vent))) + 
+  geom_bar() + labs(x = "Age", fill = "")
+```
+
+```{r}
+lives_saved <- function(allocation){
+  allocation %>% filter(get_vent == "ventilator" & alive ==1) %>% nrow()
+}
+
+
+life_years_saved <- function(allocation, max_life_span = 100){
+  df <- allocation %>% 
+    filter(get_vent == "ventilator" & alive ==1) %>%
+    mutate(life_left = (100- age))
+  
+  return(sum(df$life_left))
+}
+
+life_years_saved(lottery_allocation)
+
+pct_life_years_saved <- round(100*life_years_saved(lottery_allocation)/total_life_years)
+```
+
+Random assigment of vents, ignoring age and $P(ICU\space survival)$. A lottery allocation of `r num_vents` ventilators would save `r lives_saved(lottery_allocation)` out of `r N` patients admitted to the ICU. A lottery saves `r life_years_saved(lottery_allocation)` out of a total of possible `r total_life_years` (`r pct_life_years_saved`%).
+
+## Maximizing ICU survival
+
+```{r}
+max_icu_surv <- function(sim_pop, num_vents){
+
+  allocate <- sim_pop %>%
+    arrange(-p_surv) %>% 
+    mutate(get_vent = ifelse(row_number() <= num_vents, "ventilator", "pallative care"))
+  
+  return(allocate)
+}
+
+
+max_icu_surv_allocation <- max_icu_surv(sim_pop, num_vents)
+
+
+
+```
+
+```{r}
+max_icu_surv_allocation %>%
+  ggplot(aes(x = age_group, fill = get_vent)) + 
+  geom_bar() + labs(x = "Age", fill = "")
+```
+
+A ICU survival triage system of `r num_vents` ventilators would save `r lives_saved(max_icu_surv_allocation)` out of `r N` patients admitted to the ICU. A lottery saves `r life_years_saved(max_icu_surv_allocation)` out of a total of possible `r total_life_years` (`r round(100*life_years_saved(max_icu_surv_allocation)/total_life_years)`%).
+
+
+## Maximizing Life-years gained
+
+```{r}
+max_life_years <- function(sim_pop, num_vents){
+  
+  allocate <- sim_pop %>%
+    mutate( priority_score = p_surv*(100-age)) %>%
+    arrange(-priority_score) %>% 
+    mutate(get_vent = ifelse(row_number() <= num_vents, "ventilator", "pallative care"))
+  
+  return(allocate)
+}
+
+
+max_life_year_allocation <- max_life_years(sim_pop, num_vents)
+```
+
+
+```{r}
+max_life_year_allocation %>%
+  ggplot(aes(x = age_group, fill = get_vent)) + 
+  geom_bar() + labs(x = "Age", fill = "")
+```
+
+A life-year prioritization system of `r num_vents` ventilators would save `r lives_saved(max_life_year_allocation )` out of `r N` patients admitted to the ICU. Maximizing life-years gained saves `r life_years_saved(max_life_year_allocation )` out of a total of possible `r total_life_years` (`r round(100*life_years_saved(max_life_year_allocation)/total_life_years)`%).
+
+
+
+
+```{r,eval=FALSE}
+best_case <- cdc_data %>%
+  select(Age,
+         N,
+         hosp = low_hosp,
+         icu = low_ICU,
+         dead = low_death) %>%
+  mutate(n_hosp = N*hosp/100,
+         n_icu = N*icu/100,
+         n_dead = N*dead/100)
+
+best_case
+
+total_ICU <- sum(best_case$n_icu)
+
+best_case <- best_case %>%
+  mutate(pct_icu_pop = n_icu/total_ICU,
+                  survival = 1 - n_dead/n_icu) %>%
+  filter(Age != "0–19") %>%
+  mutate(
+    max_age = case_when(
+      Age == "20–44" ~ 44,
+      Age == "45–54" ~ 54,
+      Age == "55–64" ~ 64,
+      Age == "65–74" ~ 74,
+      Age == "75–84" ~ 84,
+      TRUE ~ 94
+    ),
+    min_age = case_when(
+      Age == "20–44" ~ 20,
+      Age == "45–54" ~ 45,
+      Age == "55–64" ~ 55,
+      Age == "65–74" ~ 65,
+      Age == "75–84" ~ 75,
+      TRUE ~ 85)
+  ) %>% 
+  mutate(survival = ifelse(survival < 0, 0, survival)) %>%
+  select(min_age, max_age, pct_icu_pop, survival)
+
+
+best_case
+```
+
