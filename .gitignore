@@ -3,3 +3,6 @@
 !.gitignore
 !*.Rmd
 !*priority_score.pdf
+!cdc_data.csv
+
+!SOFA.csv
