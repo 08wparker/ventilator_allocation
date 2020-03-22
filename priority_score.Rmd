@@ -1,6 +1,6 @@
 ---
 title: "A Continuous Life-years Gained Priority Score for Ventilator Allocation"
-author: "William Parker"
+author: "William Parker, Siva Bhavani, Susan Han, Dwight Miller, Monica Malec"
 output:
   beamer_presentation:
     colortheme: beaver
@@ -68,6 +68,9 @@ An alternative **utilitarian** approach is to maximize life-years gained
 ### Priority Score that maximizes life-years gained
 $$ Priority \space Score = P(ICU\space Survival)*(100-age) $$
 
+## Example: Maximizing life-years
+![](life_year_allocation_example.jpg)
+
 ## Priority Score vs. Patient Age, by Probability of ICU Survival
 ```{r}
 life_span_max <- 100 
@@ -102,9 +105,6 @@ expand.grid(seq(20,100, 10), seq(0,1,0.01)) %>%
 
 ```
 
-## Allocation that maximizes life-years saved
-
-![](life_year_allocation_example.jpg)
 
 \pagebreak
 # Simulation using CDC data
@@ -223,7 +223,7 @@ worst_case %>%
 ## Simulated ICU population from CDC Data
 ```{r}
 set.seed(12345)
-tot_patients <- 2000
+tot_patients <- 1000
 max_life_span <- 100
 
 #degree of scarcity
@@ -383,6 +383,16 @@ pct_life_years_saved <- round(100*life_years_saved(lottery_allocation)/total_lif
 
 A random allocation of `r num_vents` ventilators would save `r lives_saved(lottery_allocation)` out of `r tot_patients` patients admitted to the ICU. A lottery saves `r  comma(life_years_saved(lottery_allocation))` (`r pct_life_years_saved`%) out of a total of possible `r comma(total_life_years)` life years.
 
+## Lottery- age vs. SOFA
+```{r}
+lottery_allocation %>%
+  ggplot(aes(x = age, y = SOFA, color = get_vent)) +
+  geom_point()
+```
+
+
+
+
 \pagebreak
 ## Youngest first allocation
 
@@ -410,6 +420,14 @@ young_allocation %>%
 ```
 
 Youngest first allocation `r num_vents` ventilators would save `r young_lives` out of `r tot_patients` patients admitted to the ICU. Youngest first saves `r  comma(young_lf)` (`r comma(100*young_lf/total_life_years)`%) out of a total of possible `r comma(total_life_years)` life years.
+
+## Youngest first allocation- age vs. SOFA
+```{r}
+young_allocation %>%
+  ggplot(aes(x = age, y = SOFA, color = get_vent)) +
+  geom_point()
+```
+
 
 \pagebreak
 ## Maximizing ICU survival
@@ -439,6 +457,13 @@ max_icu_surv_allocation %>%
 ```
 
 A $P(ICU \space survival)$ triage system of `r num_vents` ventilators would save `r max_icu_lives` out of `r tot_patients` patients admitted to the ICU. Maximizing ICU survival saves `r comma(max_icu_lf)` out of a total of possible `r comma(total_life_years)` (`r round(100*max_icu_lf/total_life_years)`%) life-years.
+
+## Max ICU survival- age vs. SOFA
+```{r}
+max_icu_surv_allocation %>%
+  ggplot(aes(x = age, y = SOFA, color = get_vent)) +
+  geom_point()
+```
 
 \pagebreak
 ## Maximizing Life-years gained
@@ -470,6 +495,13 @@ max_life_year_allocation %>%
 ```
 
 Prioritizing life-years for `r num_vents` ventilators would save `r max_lf_lives` out of `r tot_patients` patients admitted to the ICU. Maximizing life-years gained saves `r comma(max_lf_lf)` out of a total of possible `r comma(total_life_years)` (`r round(100*max_lf_lf/total_life_years)`%) life-years.
+
+## Max life years- age vs. SOFA
+```{r}
+max_life_year_allocation%>%
+  ggplot(aes(x = age, y = SOFA, color = get_vent)) +
+  geom_point()
+```
 
 
 ## Maximizing life-years vs. ICU survival
