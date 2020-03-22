@@ -1,6 +1,6 @@
 ---
 title: "A Continuous Life-years Gained Priority Score for Ventilator Allocation"
-author: "William Parker, Siva Bhavani, Susan Han, Dwight Miller, Monica Malec"
+author: "William Parker, Siva Bhavani, Susan Han, Dwight Miller, Monica Malec, Mark Siegler"
 output:
   beamer_presentation:
     colortheme: beaver
