@@ -60,6 +60,11 @@ Not everyone is a young solider...$P(ICU\space Survival)$ ignores the potential 
 
 Goes against "youngest first" allocation principles and does not maximize life-years saved
 
+## Multiprinciple approach
+
+![](white.png)
+White et al, Ann Internal Medicine, 2009 **What justification for relative weight of each category?**  **Why categorical?**
+
 \pagebreak
 ## Maximizing life-years gained
 
@@ -135,7 +140,7 @@ cdc_data <- read_csv("cdc_data.csv") %>%
   mutate(N = numextract(N),
          Age = factor(Age, levels = c("0–19", "20–44", "45–54",
                                       "55–64", "65–74", "75–84",
-                                      "=> 85")))
+                                      "≥85")))
 ```
 
 
@@ -177,37 +182,16 @@ worst_case <- worst_case %>%
   select(Age, min_age, max_age, pct_icu_pop)
 ```
 
-## COVID-19 Age Distribution of patients requiring ICU
-```{r}
+
+```{r eval = FALSE}
+## COVID-19 Age Distribution of patients requiring ICU- CDC
 worst_case %>%
   ggplot(aes(x = Age, y = 100*pct_icu_pop)) +
   geom_bar(stat = "Identity") + labs(y = "Percentage (%)")
 ```
 
 \pagebreak
-## Calibration of the SOFA score
 
-The [Sequential Organ Failure Assesment (SOFA) score](https://en.wikipedia.org/wiki/SOFA_score)  is a validated bedside predictor of ICU mortality. The calibration of SOFA scores is drawn from [*Raith et al. JAMA, 2017*](https://jamanetwork.com/journals/jama/fullarticle/2598267)
-
-```{r}
-SOFA <- read_csv("SOFA.csv") 
-
-tot_SOFA <- sum(SOFA$N)
-
-SOFA <- SOFA %>%
-  mutate(sofa_num = ifelse(SOFA == ">=20", 20, as.numeric(SOFA)),
-    SOFA = factor(SOFA, levels = c(seq(0,19), ">=20")),
-           pct_SOFA = N/tot_SOFA)
-
-SOFA %>%
-  ggplot(aes(x =SOFA, y = death_pct)) +
-  geom_bar(stat = "Identity") + labs(y = "Mortality (%)")
-
-sd_SOFA <- SOFA %>%
-  uncount(N)
-
-sd_SOFA <- sqrt(var(sd_SOFA$sofa_num))
-```
 
 
 
@@ -220,7 +204,25 @@ worst_case %>%
 ```
 
 \pagebreak
-## Simulated ICU population from CDC Data
+## Simulated ICU population from CDC data distribution
+
+```{r}
+SOFA <- read_csv("SOFA.csv") 
+
+tot_SOFA <- sum(SOFA$N)
+
+SOFA <- SOFA %>%
+  mutate(sofa_num = ifelse(SOFA == ">=20", 20, as.numeric(SOFA)),
+    SOFA = factor(SOFA, levels = c(seq(0,19), ">=20")),
+           pct_SOFA = N/tot_SOFA)
+
+sd_SOFA <- SOFA %>%
+  uncount(N)
+
+sd_SOFA <- sqrt(var(sd_SOFA$sofa_num))
+```
+
+
 ```{r}
 set.seed(12345)
 tot_patients <- 1000
@@ -315,6 +317,18 @@ sim_pop %>%
 
 Currently drawn from $f(SOFA |age) = N(8 + \frac{age-65}{30}, 3.5)$, need to replace with a distribution estimated from real data.
 
+
+## Calibration of the SOFA score
+
+The [Sequential Organ Failure Assesment (SOFA) score](https://en.wikipedia.org/wiki/SOFA_score)  is a validated bedside predictor of ICU mortality. The calibration of SOFA scores is drawn from [*Raith et al. JAMA, 2017*](https://jamanetwork.com/journals/jama/fullarticle/2598267)
+
+```{r}
+SOFA %>%
+  ggplot(aes(x =SOFA, y = death_pct)) +
+  geom_bar(stat = "Identity") + labs(y = "Mortality (%)")
+```
+
+
 ## SOFA Score by Age
 ```{r}
 knitr::kable(sim_pop %>%
@@ -324,7 +338,7 @@ knitr::kable(sim_pop %>%
 ```
 
 \pagebreak
-## Simulated Outcomes by Age
+## Simulated Hypotehtical Outcomes by Age
 ```{r}
 # sim_pop %>%
 #   group_by(age_group) %>%
@@ -349,7 +363,11 @@ lottery_allocate <- function(sim_pop, num_vents){
   allocate <- sim_pop %>%
     cbind(lottery) %>%
     arrange(lottery) %>%
-    mutate(get_vent = ifelse(row_number() <= num_vents, "ventilator", "pallative care"))
+    mutate(get_vent = factor(case_when(
+      row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+      row_number() <= num_vents ~ "ventilator (death in ICU)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death in ICU)", "ventilator (survival)", "palliative care"))
+    )
   
   return(allocate)
 }
@@ -364,15 +382,27 @@ lottery_allocation %>%
   geom_bar() + labs(x = "Age", fill = "")
 ```
 
+## lottery allocation - ICU outcomes
+
+```{r}
+lottery_allocation %>%
+  filter(get_vent != "palliative care") %>%
+  ggplot(aes(x = age_group, fill = get_vent)) + 
+  geom_bar() + labs(x = "Age", fill = "")
+```
+
+
+
+
 ```{r}
 lives_saved <- function(allocation){
-  allocation %>% filter(get_vent == "ventilator" & alive ==1) %>% nrow()
+  allocation %>% filter(get_vent == "ventilator (survival)") %>% nrow()
 }
 
 
 life_years_saved <- function(allocation, max_life_span = 100){
   df <- allocation %>% 
-    filter(get_vent == "ventilator" & alive ==1) %>%
+    filter(get_vent == "ventilator (survival)") %>%
     mutate(life_left = (100- age))
   
   return(sum(df$life_left))
@@ -381,13 +411,13 @@ life_years_saved <- function(allocation, max_life_span = 100){
 pct_life_years_saved <- round(100*life_years_saved(lottery_allocation)/total_life_years)
 ```
 
-A random allocation of `r num_vents` ventilators would save `r lives_saved(lottery_allocation)` out of `r tot_patients` patients admitted to the ICU. A lottery saves `r  comma(life_years_saved(lottery_allocation))` (`r pct_life_years_saved`%) out of a total of possible `r comma(total_life_years)` life years.
+A random allocation of `r num_vents` ventilators would save `r lives_saved(lottery_allocation)` out of `r tot_patients` who were in need of mechanical ventilation. A lottery saves `r  comma(life_years_saved(lottery_allocation))` (`r pct_life_years_saved`%) out of a total of possible `r comma(total_life_years)` life years.
 
 ## Lottery- age vs. SOFA
 ```{r}
 lottery_allocation %>%
   ggplot(aes(x = age, y = SOFA, color = get_vent)) +
-  geom_point()
+  geom_point() + labs(color = "")
 ```
 
 
@@ -401,7 +431,11 @@ youngest_allocate <- function(sim_pop, num_vents){
 
   allocate <- sim_pop %>%
     arrange(age) %>% 
-    mutate(get_vent = ifelse(row_number() <= num_vents, "ventilator", "pallative care"))
+    mutate(get_vent = factor(case_when(
+      row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+      row_number() <= num_vents ~ "ventilator (death in ICU)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death in ICU)", "ventilator (survival)", "palliative care"))
+    )
   
   return(allocate)
 }
@@ -419,13 +453,22 @@ young_allocation %>%
   geom_bar() + labs(x = "Age", fill = "")
 ```
 
-Youngest first allocation `r num_vents` ventilators would save `r young_lives` out of `r tot_patients` patients admitted to the ICU. Youngest first saves `r  comma(young_lf)` (`r comma(100*young_lf/total_life_years)`%) out of a total of possible `r comma(total_life_years)` life years.
+Youngest first allocation `r num_vents` ventilators would save `r young_lives` out of `r tot_patients` who were in need of mechanical ventilation. Youngest first saves `r  comma(young_lf)` (`r comma(100*young_lf/total_life_years)`%) out of a total of possible `r comma(total_life_years)` life years.
+
+## Youngest first - ICU allocation
+```{r}
+young_allocation %>%
+  filter(get_vent != "palliative care") %>%
+  ggplot(aes(x = age_group, fill = get_vent)) + 
+  geom_bar() + labs(x = "Age", fill = "")
+```
 
 ## Youngest first allocation- age vs. SOFA
+
 ```{r}
 young_allocation %>%
   ggplot(aes(x = age, y = SOFA, color = get_vent)) +
-  geom_point()
+  geom_point() + labs(color = " ")
 ```
 
 
@@ -437,8 +480,11 @@ max_icu_surv <- function(sim_pop, num_vents){
 
   allocate <- sim_pop %>%
     arrange(-p_surv) %>% 
-    mutate(get_vent = ifelse(row_number() <= num_vents, "ventilator", "pallative care"))
-  
+    mutate(get_vent = factor(case_when(
+      row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+      row_number() <= num_vents ~ "ventilator (death in ICU)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death in ICU)", "ventilator (survival)", "palliative care"))
+    )
   return(allocate)
 }
 
@@ -456,13 +502,22 @@ max_icu_surv_allocation %>%
   geom_bar() + labs(x = "Age", fill = "")
 ```
 
-A $P(ICU \space survival)$ triage system of `r num_vents` ventilators would save `r max_icu_lives` out of `r tot_patients` patients admitted to the ICU. Maximizing ICU survival saves `r comma(max_icu_lf)` out of a total of possible `r comma(total_life_years)` (`r round(100*max_icu_lf/total_life_years)`%) life-years.
+A $P(ICU \space survival)$ triage system of `r num_vents` ventilators would save `r max_icu_lives` out of `r tot_patients` who were in need of mechanical ventilation. Maximizing ICU survival saves `r comma(max_icu_lf)` out of a total of possible `r comma(total_life_years)` (`r round(100*max_icu_lf/total_life_years)`%) life-years.
+
+## Maximizing ICU survival- ICU Outcomes
+```{r}
+max_icu_surv_allocation %>%
+  filter(get_vent != "palliative care") %>%
+  ggplot(aes(x = age_group, fill = get_vent)) + 
+  geom_bar() + labs(x = "Age", fill = "")
+```
+
 
 ## Max ICU survival- age vs. SOFA
 ```{r}
 max_icu_surv_allocation %>%
   ggplot(aes(x = age, y = SOFA, color = get_vent)) +
-  geom_point()
+  geom_point() + labs(color = " ")
 ```
 
 \pagebreak
@@ -474,7 +529,11 @@ max_life_years <- function(sim_pop, num_vents){
   allocate <- sim_pop %>%
     mutate( priority_score = p_surv*(100-age)) %>%
     arrange(-priority_score) %>% 
-    mutate(get_vent = ifelse(row_number() <= num_vents, "ventilator", "pallative care"))
+    mutate(get_vent = factor(case_when(
+      row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+      row_number() <= num_vents ~ "ventilator (death in ICU)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death in ICU)", "ventilator (survival)", "palliative care"))
+    )
   
   return(allocate)
 }
@@ -496,11 +555,20 @@ max_life_year_allocation %>%
 
 Prioritizing life-years for `r num_vents` ventilators would save `r max_lf_lives` out of `r tot_patients` patients admitted to the ICU. Maximizing life-years gained saves `r comma(max_lf_lf)` out of a total of possible `r comma(total_life_years)` (`r round(100*max_lf_lf/total_life_years)`%) life-years.
 
+
+## Max Life Years- ICU Outcomes by Age
+```{r}
+max_life_year_allocation %>%
+  filter(get_vent != "palliative care") %>%
+  ggplot(aes(x = age_group, fill = get_vent)) + 
+  geom_bar() + labs(x = "Age", fill = "")
+```
+
 ## Max life years- age vs. SOFA
 ```{r}
 max_life_year_allocation%>%
   ggplot(aes(x = age, y = SOFA, color = get_vent)) +
-  geom_point()
+  geom_point() + labs(color = "")
 ```
 
 
