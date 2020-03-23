@@ -6,5 +6,5 @@
 !cdc_data.csv
 
 !SOFA.csv
-!vent_allocation_app.R
+!/*.R
 .Rproj.user

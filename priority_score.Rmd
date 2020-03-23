@@ -502,11 +502,7 @@ max_icu_surv_allocation %>%
   geom_bar() + labs(x = "Age", fill = "")
 ```
 
-<<<<<<< HEAD
-A $P(ICU \space survival)$ triage system of `r num_vents` ventilators would save `r max_icu_lives` out of `r tot_patients` patients in need. Max ICU surival saves `r comma(max_icu_lf)` out of a total of possible `r comma(total_life_years)` (`r round(100*max_icu_lf/total_life_years)`%) life-years.
-=======
-A $P(ICU \space survival)$ triage system of `r num_vents` ventilators would save `r max_icu_lives` out of `r tot_patients` who were in need of mechanical ventilation. Maximizing ICU survival saves `r comma(max_icu_lf)` out of a total of possible `r comma(total_life_years)` (`r round(100*max_icu_lf/total_life_years)`%) life-years.
->>>>>>> 84f5795f52500925f1b9f2efd438566dacd26751
+A max ICU survival triage system of `r num_vents` ventilators would save `r max_icu_lives` out of `r tot_patients` who were in need of mechanical ventilation. Maximizing ICU survival saves `r comma(max_icu_lf)` out of a total of possible `r comma(total_life_years)` (`r round(100*max_icu_lf/total_life_years)`%) life-years.
 
 ## Maximizing ICU survival- ICU Outcomes
 ```{r}
