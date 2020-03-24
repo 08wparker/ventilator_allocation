@@ -9,35 +9,68 @@
 
 library(shiny)
 library(tidyverse)
+library(truncnorm)
+
 
 ui <- fluidPage(
     # App title ----
     titlePanel("Ventilator allocation"),
     
-    fluidRow(
-        column(6,
-               sliderInput(inputId = "patients",
-                           label = "Number of patients",
-                           min = 1,
-                           max = 1000,
-                           value = 1000)),
-        column(6,sliderInput(inputId = "vents",
-                             label = "Number of ventilators",
-                             min = 0,
-                             max = 1000,
-                             value = 500))),
-
-    fluidRow(column(6, plotOutput("age_dist")),
-             column(6, plotOutput("sofa_dist"))),
+    h4("Siva Bhavani, MD and Will Parker MD, MS, University of Chicago"),
     
+    hr(),
     
-    fluidRow(column(6, plotOutput('lottery')),
-             column(6, plotOutput('youngest'))),
+    sidebarLayout(
+        sidebarPanel(
+            h5("Select the number of patients requiring mechanical ventilation 
+                                       and the number of ventilators available at the hospital"),
+                    sliderInput(inputId = "patients",
+                                      label = "Number of patients",
+                                      min = 1,
+                                      max = 1000,
+                                      value = 500),
+                     sliderInput(inputId = "vents",
+                                      label = "Number of ventilators",
+                                      min = 1,
+                                      max = 1000,
+                                      value = 250),
+                     actionButton("sim", "Simulate"),
+                    hr(),
+                    h4("Outcomes by Allocation System"),
+                     tableOutput("table"), width =  5),
+        
+    mainPanel(
+        h2("Select Allocation System"),
+        tabsetPanel(
+                    tabPanel("Lottery", plotOutput('lottery')),
+                    tabPanel("Youngest First", plotOutput('youngest')),
+                    tabPanel("New York", plotOutput('ny')),
+                    tabPanel("SOFA (continuous)", plotOutput('max_icu')),
+                    tabPanel("Maximize Life-Years Gained", 
+                             plotOutput('max_lf')),
+                    type = "tabs",
+                    selected = "New York"
+        ), width = 7)
+    ),
     
-    fluidRow(column(6, plotOutput('max_icu')),
-             column(6, plotOutput('max_lf'))),
+    hr(),
+    fluidRow(column(3, h2("Simulated Population")),
+             column(3,sliderInput(inputId = "mean_sofa",
+                                  label = "Mean Sofa Score",
+                                  min = 5,
+                                  max = 15,
+                                  value = 7)),
+                column(3,
+                    sliderInput(inputId = "age_slope",
+                                label = "Age-SOFA relationship",
+                                min = 0,
+                                max = 0.2,
+                                value = 0.1))
+    ),
     
-    fluidRow(tableOutput("table"))
+    fluidRow(column(4, h4("Simulated Age Distribution"), plotOutput("age_dist")),
+             column(4, h4("Simulated SOFA Distribution"), plotOutput("sofa_dist")),
+             column(4, h4("SOFA distribution by Age"),tableOutput("sofa_age_table")))
 )
 
 
@@ -111,7 +144,7 @@ sd_SOFA <- SOFA %>%
 sd_SOFA <- sqrt(var(sd_SOFA$sofa_num))
 
 
-simulate_ICU_pop <- function(df, N = tot_patients, sofa, mean_sofa = 8, sd_sofa = 3.5){
+simulate_ICU_pop <- function(df, N = tot_patients, sofa, mean_sofa, sd_sofa = 3.5, age_slope){
     
     probs <- df$pct_icu_pop
     
@@ -138,21 +171,18 @@ simulate_ICU_pop <- function(df, N = tot_patients, sofa, mean_sofa = 8, sd_sofa 
         age_sample <- runif(n = n_cats, min = min_age, max = max_age)
         
         
-        # sample SOFA score- assuming no correlation between age and SOFA
+        # sample SOFA score- from a truncated normal distribution
         
-        #sofa_counts <- rmultinom(n =1, size = n_cats, pr = sofa$pct_SOFA)
-        # # sofa_scores <- tibble(SOFA = sofa$SOFA,
-        # #        counts = sofa_counts ) %>%
-        # #   uncount(counts) %>%
-        #  left_join(sofa %>% select(SOFA, death_pct)) %>%
-        #   mutate(p_surv = (100-death_pct)/100)
+        group_mean_sofa <- mean_sofa + age_slope*(min_age - 65)
         
-        group_mean_sofa <- mean_sofa + (min_age - 65)/30
-        
-        sofa_scores <- tibble(sofa_num = round(rnorm(n = n_cats, mean = group_mean_sofa, sd = sd_sofa))) %>%
+        sofa_scores <- tibble(sofa_num = round(rtruncnorm(n = n_cats, 
+                                                          a = 3,
+                                                          b = 20,
+                                                          mean = group_mean_sofa, 
+                                                          sd = sd_sofa))) %>%
             mutate(sofa_num = case_when(
                 sofa_num>= 20 ~ 20,
-                sofa_num < 0 ~ 0 ,
+                sofa_num < 3 ~ 3 ,
                 TRUE ~ sofa_num)) %>%
             left_join(sofa %>% select(SOFA, sofa_num, death_pct)) %>%
             mutate(p_surv = (100-death_pct)/100)
@@ -185,8 +215,8 @@ lottery_allocate <- function(sim_pop, num_vents){
         arrange(lottery) %>%
         mutate(get_vent = factor(case_when(
             row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
-            row_number() <= num_vents ~ "ventilator (death in ICU)",
-            TRUE ~ "palliative care"), levels = c("ventilator (death in ICU)", "ventilator (survival)", "palliative care"))
+            row_number() <= num_vents ~ "ventilator (death)",
+            TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
         )
     
     return(allocate)
@@ -198,14 +228,40 @@ youngest_allocate <- function(sim_pop, num_vents){
         arrange(age) %>% 
         mutate(get_vent = factor(case_when(
             row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
-            row_number() <= num_vents ~ "ventilator (death in ICU)",
-            TRUE ~ "palliative care"), levels = c("ventilator (death in ICU)", "ventilator (survival)", "palliative care"))
+            row_number() <= num_vents ~ "ventilator (death)",
+            TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
         )
     
     return(allocate)
 }
 
-
+ny_allocate <- function(sim_pop, num_vents){
+    
+    lottery <- runif(n = sim_pop %>% nrow())
+    
+    
+    allocate <- sim_pop %>%
+        cbind(lottery) %>%
+        mutate(triage_cat = case_when(
+            sofa_num < 7 ~ "Highest",
+            sofa_num < 12 ~ "Intermediate",
+            TRUE ~ "No ventilator"
+        ), priority_score = case_when(
+            triage_cat == "Highest" ~ lottery,
+            triage_cat == "Intermediate" ~ 1 + lottery,
+            TRUE ~ 2 + lottery)
+        ) %>%
+        arrange(priority_score) %>%
+        mutate(get_vent = factor(case_when(
+            row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+            row_number() <= num_vents ~ "ventilator (death)",
+            TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
+        )
+    
+    return(allocate)
+    
+    
+}
 
 max_icu_surv <- function(sim_pop, num_vents){
     
@@ -213,8 +269,8 @@ max_icu_surv <- function(sim_pop, num_vents){
         arrange(-p_surv) %>% 
         mutate(get_vent = factor(case_when(
             row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
-            row_number() <= num_vents ~ "ventilator (death in ICU)",
-            TRUE ~ "palliative care"), levels = c("ventilator (death in ICU)", "ventilator (survival)", "palliative care"))
+            row_number() <= num_vents ~ "ventilator (death)",
+            TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
         )
     return(allocate)
 }
@@ -226,8 +282,8 @@ max_life_years <- function(sim_pop, num_vents){
         arrange(-priority_score) %>% 
         mutate(get_vent = factor(case_when(
             row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
-            row_number() <= num_vents ~ "ventilator (death in ICU)",
-            TRUE ~ "palliative care"), levels = c("ventilator (death in ICU)", "ventilator (survival)", "palliative care"))
+            row_number() <= num_vents ~ "ventilator (death)",
+            TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
         )
     
     return(allocate)
@@ -248,104 +304,151 @@ life_years_saved <- function(allocation, max_life_span = 100){
 }
 
 
-g_legend<-function(a.gplot){
-    tmp <- ggplot_gtable(ggplot_build(a.gplot))
-    leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
-    legend <- tmp$grobs[[leg]]
-    return(legend)}
-
+text_size <- 14
 # Define server logic
 server <- function(input, output) {
-        
-    sim_pop <- reactive({
-        simulate_ICU_pop(worst_case, N = input$patients, sofa = SOFA)
-    })
-
-    lottery <- reactive({
-        lottery_allocate(sim_pop(), input$vents)
-    })
-
-    youngest <- reactive({
-        youngest_allocate(sim_pop(), input$vents)
-    })
-
-
-    max_icu <- reactive({
-        max_icu_surv(sim_pop(), input$vents)
-    })
-
-    max_lf <- reactive({
-        max_life_years(sim_pop(), input$vents)
-    })
-
-    output$age_dist <- renderPlot({
-        sim_pop() %>%
-            ggplot(aes(x = age_group)) + 
-            geom_histogram(stat = "count") +
-            ggtitle("Simulated Age Distribution")
-    })
     
-    output$sofa_dist <- renderPlot({
-        sim_pop() %>%
-            ggplot(aes(x = SOFA)) +
-            geom_histogram(stat = "count") + 
-            ggtitle("Simulated SOFA score Distribution")
-    })
-
-    output$lottery <- renderPlot({
-            lottery() %>%
-                ggplot(aes(x = age, y = SOFA, color = get_vent)) +
-                geom_point() + labs(color = "") +
-                theme(legend.position = "bottom") +
-                ggtitle("Random Ventilator Allocation")
+    observeEvent(input$sim, {
+        
+        sim_pop <- reactive({
+            simulate_ICU_pop(worst_case, 
+                             N = input$patients, 
+                             sofa = SOFA, 
+                             mean_sofa = input$mean_sofa,
+                             age_slope = input$age_slope)
         })
-
-    output$youngest <- renderPlot({
-        youngest() %>%
-            ggplot(aes(x = age, y = SOFA, color = get_vent)) +
-            geom_point() + labs(color = "") +
-            theme(legend.position = "bottom") +
-            ggtitle("Youngest First allocation")
-    })
-
-    output$max_icu <- renderPlot({
-        max_icu() %>%
-            ggplot(aes(x = age, y = SOFA, color = get_vent)) +
-            geom_point() + labs(color = "") +
-            theme(legend.position = "bottom") +
-            ggtitle("Maximize ICU Survival")
-    })
-
-    output$max_lf <- renderPlot({
-        max_lf() %>%
-            ggplot(aes(x = age, y = SOFA, color = get_vent)) +
-            geom_point() + labs(color = "") +
-            theme(legend.position = "bottom") +
-            ggtitle("Maximize Life Years Gained")
-    })
     
-    output$table <- renderTable({
+        lottery <- reactive({
+            lottery_allocate(sim_pop(), input$vents)
+        })
+    
+        youngest <- reactive({
+            youngest_allocate(sim_pop(), input$vents)
+        })
         
-            total_life_years <- 100*input$patients - sum(sim_pop()$age)
+        ny_allocation <- reactive({
+            ny_allocate(sim_pop(), input$vents)
+        })
+    
+        max_icu <- reactive({
+            max_icu_surv(sim_pop(), input$vents)
+        })
+    
+        max_lf <- reactive({
+            max_life_years(sim_pop(), input$vents)
+        })
+    
+        output$age_dist <- renderPlot({
+            sim_pop() %>%
+                ggplot(aes(x = age_group)) + 
+                geom_histogram(stat = "count", fill = "cyan4", color = "black") +
+                labs(x = "Age") 
+        })
+        
+        output$sofa_dist <- renderPlot({
+            sim_pop() %>%
+                ggplot(aes(x = SOFA)) +
+                scale_x_discrete(drop = FALSE) +
+                geom_histogram(stat = "count", fill = "darkgoldenrod1",color = "black")
+        })
+    
+        output$lottery <- renderPlot({
+                lottery() %>%
+                    ggplot(aes(x = age, y = SOFA, color = get_vent)) +
+                    scale_y_discrete(drop = FALSE) +
+                    geom_point(size = 3) + labs(color = "", x = "Age") +
+                    theme(
+                          legend.text=element_text(size=text_size),
+                          axis.title = element_text(size = text_size),
+                          legend.title = element_text(size = text_size)) 
+            })
+    
+        output$youngest <- renderPlot({
+            youngest() %>%
+                ggplot(aes(x = age, y = SOFA, color = get_vent)) +
+                scale_y_discrete(drop = FALSE) +
+                geom_point(size = 3) + labs(color = "", x = "Age") +
+                theme(
+                      legend.text=element_text(size=text_size),
+                      axis.title = element_text(size = text_size),
+                      legend.title = element_text(size = text_size)) 
+        })
+        
+        
+        output$ny <- renderPlot({
             
-            systems <- c("Lottery", "Youngest First allocation", "Maximize ICU Survival", "Maximize Life Years Gained")
-            lives <- c(lives_saved(lottery()),
-                       lives_saved(youngest()),
-                       lives_saved(max_icu()),
-                       lives_saved(max_lf()))
+            intermediate_high <-(which(levels(ny_allocation()$SOFA) == "6")) + 0.5
             
-            life_years <- c(life_years_saved(lottery()),
-                            life_years_saved(youngest()),
-                            life_years_saved(max_icu()),
-                            life_years_saved(max_lf()))
+            intermediate_none <-(which(levels(ny_allocation()$SOFA) == "11")) + 0.5
             
-            tibble(system = systems, 
-                   "ICU survivors (N)" = lives,
-                   "Life-years saved" = life_years) %>%
-                mutate("ICU survival %" = paste0(round(100*`ICU survivors (N)`/input$patients), "%"),
-                       "Life years %" = paste0(round(100*`Life-years saved`/total_life_years), "%"),
-                       `Life-years saved` = comma(`Life-years saved`))  %>%
-                select(system, `ICU survivors (N)`, `ICU survival %`, `Life-years saved`, `Life years %`)
+            
+            ny_allocation() %>%
+                ggplot(aes(x = age, y = SOFA, color = get_vent, shape = triage_cat)) +
+                geom_point(size = 3) + labs(color = "", shape = "NY triage category", x = "Age") +
+                scale_y_discrete(drop = FALSE) +
+                geom_hline(aes(yintercept = intermediate_none), linetype = "solid") + 
+                geom_hline(aes(yintercept = intermediate_high), linetype = "dashed") +
+                theme(legend.text=element_text(size=text_size),
+                      axis.title = element_text(size = text_size),
+                      legend.title = element_text(size = text_size))
+        })
+    
+        output$max_icu <- renderPlot({
+            max_icu() %>%
+                ggplot(aes(x = age, y = SOFA, color = get_vent)) +
+                scale_y_discrete(drop = FALSE) +
+                geom_point(size = 3) + labs(color = "", x = "Age") +
+                theme(
+                      legend.text=element_text(size=text_size),
+                      axis.title = element_text(size = text_size),
+                      legend.title = element_text(size = text_size))
+        })
+    
+        output$max_lf <- renderPlot({
+            max_lf() %>%
+                ggplot(aes(x = age, y = SOFA, color = get_vent)) +
+                scale_y_discrete(drop = FALSE) +
+                geom_point(size = 3) + labs(color = "", x = "Age") +
+                theme(
+                      legend.text=element_text(size=text_size),
+                      axis.title = element_text(size = text_size),
+                      legend.title = element_text(size = text_size))  
+        })
+        
+        output$table <- renderTable({
+            
+                total_life_years <- 100*input$patients - sum(sim_pop()$age)
+                
+                systems <- c("Lottery", "Youngest first", "New York", "SOFA (continuous)", "Maximize Life Years")
+                lives <- c(lives_saved(lottery()),
+                           lives_saved(youngest()),
+                           lives_saved(ny_allocation()),
+                           lives_saved(max_icu()),
+                           lives_saved(max_lf()))
+                
+                life_years <- c(life_years_saved(lottery()),
+                                life_years_saved(youngest()),
+                                life_years_saved(ny_allocation()),
+                                life_years_saved(max_icu()),
+                                life_years_saved(max_lf()))
+                
+                tibble(system = systems,
+                       lives = as.numeric(lives), 
+                       life_years = life_years) %>%
+                    mutate(
+                        "Survivors" = paste0(lives," (", round(100*lives/input$patients), "%)"), 
+                        "Life-years saved" = paste0(comma(life_years),
+                                                    " (", round(100*life_years/total_life_years), "%)")) %>%
+                    select(system, `Survivors`, `Life-years saved`)
+        })
+        
+        output$sofa_age_table <- renderTable({
+            sim_pop() %>%
+                group_by(age_group) %>%
+                summarise(mean_sofa = round(mean(sofa_num),2),
+                          survival = paste0(round(100*mean(p_surv)), "%")) %>%
+                select("Age" = age_group, "Mean SOFA" = mean_sofa, "Survival (with ventilator)" = survival)
+        })
     })
 }
 

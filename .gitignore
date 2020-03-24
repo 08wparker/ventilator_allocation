@@ -6,5 +6,5 @@
 !cdc_data.csv
 
 !SOFA.csv
-!/*.R
+!/ventilator_app.R
 .Rproj.user

@@ -28,6 +28,7 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 
 ```{r libraries, include=FALSE, cache=FALSE}
 library(tidyverse)
+library(truncnorm)
 ```
 
 \pagebreak
@@ -224,76 +225,74 @@ sd_SOFA <- sqrt(var(sd_SOFA$sofa_num))
 
 
 ```{r}
-set.seed(12345)
+set.seed(123456)
 tot_patients <- 1000
 max_life_span <- 100
+
 
 #degree of scarcity
 num_vents <- tot_patients*0.5
 
-simulate_ICU_pop <- function(df, N = tot_patients, sofa, mean_sofa = 8, sd_sofa = 3.5){
-  
-  probs <- df$pct_icu_pop
-  
-  age_cats <- rmultinom(1, size = N, pr = probs)
-  
-  sample <- tibble(age_group = character(),
-                   age = numeric(),
-                   alive = numeric(),
-                   dead = numeric(),
-                   p_surv = numeric())
-  
-  i <- 1
-  
-  
-  for (n_cats in age_cats) {
+simulate_ICU_pop <- function(df, N = tot_patients, sofa, mean_sofa = 7, sd_sofa = 3.5, age_slope = 0.1){
     
-    subgroup <- df[i,]
+    probs <- df$pct_icu_pop
     
-    subgroup
+    age_cats <- rmultinom(1, size = N, pr = probs)
     
-    # randomly sample ages from uniform distribution
-    min_age <- subgroup$min_age
-    max_age <- subgroup$max_age
-    age_sample <- runif(n = n_cats, min = min_age, max = max_age)
+    sample <- tibble(age_group = character(),
+                     age = numeric(),
+                     alive = numeric(),
+                     dead = numeric(),
+                     p_surv = numeric())
+    
+    i <- 1
     
     
-    # sample SOFA score- assuming no correlation between age and SOFA
+    for (n_cats in age_cats) {
+        
+        subgroup <- df[i,]
+        
+        subgroup
+        
+        # randomly sample ages from uniform distribution
+        min_age <- subgroup$min_age
+        max_age <- subgroup$max_age
+        age_sample <- runif(n = n_cats, min = min_age, max = max_age)
+        
+        
+        # sample SOFA score- from a truncated normal distribution
+        
+        group_mean_sofa <- mean_sofa + age_slope*(min_age - 65)
+        
+        sofa_scores <- tibble(sofa_num = round(rtruncnorm(n = n_cats, 
+                                                          a = 3,
+                                                          b = 20,
+                                                          mean = group_mean_sofa, 
+                                                          sd = sd_sofa))) %>%
+            mutate(sofa_num = case_when(
+                sofa_num>= 20 ~ 20,
+                sofa_num < 3 ~ 3 ,
+                TRUE ~ sofa_num)) %>%
+            left_join(sofa %>% select(SOFA, sofa_num, death_pct)) %>%
+            mutate(p_surv = (100-death_pct)/100)
+        
+        
+        # sample actual survival outcomes
+        chance <- runif(n = n_cats)
+        
+        sub_sample <- tibble(age_group = subgroup$Age,
+                             age = age_sample) %>%
+            cbind(sofa_scores) %>%
+            cbind(chance) %>%
+            mutate(age = round(age),
+                   alive = ifelse(chance < p_surv, 1, 0))
+        
+        sample <- sample %>% rbind(sub_sample)
+        
+        i <- i + 1
+    }
     
-    #sofa_counts <- rmultinom(n =1, size = n_cats, pr = sofa$pct_SOFA)
-    # # sofa_scores <- tibble(SOFA = sofa$SOFA,
-    # #        counts = sofa_counts ) %>%
-    # #   uncount(counts) %>%
-    #  left_join(sofa %>% select(SOFA, death_pct)) %>%
-    #   mutate(p_surv = (100-death_pct)/100)
-    
-    group_mean_sofa <- mean_sofa + (min_age - 65)/30
-
-    sofa_scores <- tibble(sofa_num = round(rnorm(n = n_cats, mean = group_mean_sofa, sd = sd_sofa))) %>%
-      mutate(sofa_num = case_when(
-        sofa_num>= 20 ~ 20,
-        sofa_num < 0 ~ 0 ,
-        TRUE ~ sofa_num)) %>%
-      left_join(sofa %>% select(SOFA, sofa_num, death_pct)) %>%
-      mutate(p_surv = (100-death_pct)/100)
-      
-    
-    # sample actual survival outcomes
-    chance <- runif(n = n_cats)
-    
-    sub_sample <- tibble(age_group = subgroup$Age,
-                           age = age_sample) %>%
-      cbind(sofa_scores) %>%
-      cbind(chance) %>%
-      mutate(age = round(age),
-             alive = ifelse(chance < p_surv, 1, 0))
-    
-    sample <- sample %>% rbind(sub_sample)
-    
-    i <- i + 1
-  }
-  
-  return(sample %>% select(age_group, age, SOFA, sofa_num, p_surv, alive))
+    return(sample %>% select(age_group, age, SOFA, sofa_num, p_surv, alive))
 }
 
 sim_pop <- simulate_ICU_pop(worst_case, sofa = SOFA)
@@ -315,7 +314,7 @@ sim_pop %>%
   geom_histogram(stat = "count")
 ```
 
-Currently drawn from $f(SOFA |age) = N(8 + \frac{age-65}{30}, 3.5)$, need to replace with a distribution estimated from real data.
+$f(SOFA |age)$Currently drawn from a truncated normal distribution with lower limit $a = 3$, upper limit $b = 20$, $\mu = 7 + 0.1*(age-65)$, and $\sigma = 3.5$ need to replace with a distribution estimated from real data.
 
 
 ## Calibration of the SOFA score
@@ -335,10 +334,17 @@ knitr::kable(sim_pop %>%
   group_by(age_group) %>%
   summarise(mean_sofa = round(mean(sofa_num),1),
             survival = paste0(round(100*mean(p_surv)), "%")), col.names = c("Age", "Mean SOFA", "Survival with Ventilator"))
+
+
+# sim_pop %>%
+#                   group_by(age_group) %>%
+#                 summarise(mean_sofa = round(mean(sofa_num),1),
+#                           survival = paste0(round(100*mean(p_surv)), "%")) %>%
+#                 select("Age" = age_group, "Mean SOFA" = mean_sofa, "Survival with Ventilator" = survival)
 ```
 
 \pagebreak
-## Simulated Hypotehtical Outcomes by Age
+## Simulated Hypothetical Outcomes by Age
 ```{r}
 # sim_pop %>%
 #   group_by(age_group) %>%
@@ -365,8 +371,8 @@ lottery_allocate <- function(sim_pop, num_vents){
     arrange(lottery) %>%
     mutate(get_vent = factor(case_when(
       row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
-      row_number() <= num_vents ~ "ventilator (death in ICU)",
-      TRUE ~ "palliative care"), levels = c("ventilator (death in ICU)", "ventilator (survival)", "palliative care"))
+      row_number() <= num_vents ~ "ventilator (death)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
     )
   
   return(allocate)
@@ -417,7 +423,8 @@ A random allocation of `r num_vents` ventilators would save `r lives_saved(lotte
 ```{r}
 lottery_allocation %>%
   ggplot(aes(x = age, y = SOFA, color = get_vent)) +
-  geom_point() + labs(color = "")
+  geom_point() + labs(color = "") +
+  scale_y_discrete(drop = FALSE)
 ```
 
 
@@ -433,8 +440,8 @@ youngest_allocate <- function(sim_pop, num_vents){
     arrange(age) %>% 
     mutate(get_vent = factor(case_when(
       row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
-      row_number() <= num_vents ~ "ventilator (death in ICU)",
-      TRUE ~ "palliative care"), levels = c("ventilator (death in ICU)", "ventilator (survival)", "palliative care"))
+      row_number() <= num_vents ~ "ventilator (death)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
     )
   
   return(allocate)
@@ -468,8 +475,82 @@ young_allocation %>%
 ```{r}
 young_allocation %>%
   ggplot(aes(x = age, y = SOFA, color = get_vent)) +
-  geom_point() + labs(color = " ")
+  geom_point() + labs(color = " ") +
+  scale_y_discrete(drop = FALSE)
 ```
+
+
+
+## NY allocation
+```{r}
+ny_allocate <- function(sim_pop, num_vents){
+  
+  lottery <- runif(n = sim_pop %>% nrow())
+  
+  
+  allocate <- sim_pop %>%
+    cbind(lottery) %>%
+    mutate(triage_cat = case_when(
+      sofa_num < 7 ~ "Highest",
+      sofa_num < 12 ~ "Intermediate",
+      TRUE ~ "No ventilator"
+    ), priority_score = case_when(
+      triage_cat == "Highest" ~ lottery,
+      triage_cat == "Intermediate" ~ 1 + lottery,
+      TRUE ~ 2 + lottery)
+    ) %>%
+    arrange(priority_score) %>%
+    mutate(get_vent = factor(case_when(
+      row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+      row_number() <= num_vents ~ "ventilator (death)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
+    )
+  
+  return(allocate)
+  
+  
+}
+
+ny_allocation <- ny_allocate(sim_pop, num_vents)
+```
+
+
+```{r}
+ny_allocation %>%
+  ggplot(aes(x = age_group, fill = get_vent)) + 
+  geom_bar() + labs(x = "Age", fill = "")
+
+ny_lives <- lives_saved(ny_allocation)
+
+ny_lf <- life_years_saved(ny_allocation)
+```
+
+NY allocation systems of `r num_vents` ventilators would save `r ny_lives` out of `r tot_patients` who were in need of mechanical ventilation. Youngest first saves `r  comma(ny_lf)` (`r comma(100*ny_lf/total_life_years)`%) out of a total of possible `r comma(total_life_years)` life years.
+
+
+## NY outcomes- population allocated vents
+```{r}
+ny_allocation %>%
+  filter(get_vent != "palliative care") %>%
+  ggplot(aes(x = age_group, fill = get_vent)) + 
+  geom_bar() + labs(x = "Age", fill = "")
+```
+
+
+## NY allocation system- age vs. SOFA
+```{r}
+intermediate_high <-(which(levels(ny_allocation$SOFA) == "6")) + 0.5
+
+intermediate_none <-(which(levels(ny_allocation$SOFA) == "11")) + 0.5
+
+ny_allocation %>%
+  ggplot(aes(x = age, y = SOFA, color = get_vent, shape = triage_cat)) +
+  scale_y_discrete(drop = FALSE) +
+  geom_point() + labs(color = " ", shape = "NY triage category") +
+  geom_hline(aes(yintercept = intermediate_high), linetype = "dashed") +
+  geom_hline(aes(yintercept = intermediate_none), linetype = "solid")
+```
+
 
 
 \pagebreak
@@ -478,12 +559,14 @@ young_allocation %>%
 ```{r}
 max_icu_surv <- function(sim_pop, num_vents){
 
+  
+  
   allocate <- sim_pop %>%
     arrange(-p_surv) %>% 
     mutate(get_vent = factor(case_when(
       row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
-      row_number() <= num_vents ~ "ventilator (death in ICU)",
-      TRUE ~ "palliative care"), levels = c("ventilator (death in ICU)", "ventilator (survival)", "palliative care"))
+      row_number() <= num_vents ~ "ventilator (death)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
     )
   return(allocate)
 }
@@ -502,7 +585,7 @@ max_icu_surv_allocation %>%
   geom_bar() + labs(x = "Age", fill = "")
 ```
 
-A max ICU survival triage system of `r num_vents` ventilators would save `r max_icu_lives` out of `r tot_patients` who were in need of mechanical ventilation. Maximizing ICU survival saves `r comma(max_icu_lf)` out of a total of possible `r comma(total_life_years)` (`r round(100*max_icu_lf/total_life_years)`%) life-years.
+A max ICU survival triage system of `r num_vents` ventilators would save `r max_icu_lives` out of `r tot_patients` who were in need of mechanical ventilation. Max ICU survival saves `r comma(max_icu_lf)` out of a total of possible `r comma(total_life_years)` (`r round(100*max_icu_lf/total_life_years)`%) life-years.
 
 ## Maximizing ICU survival- ICU Outcomes
 ```{r}
@@ -517,7 +600,8 @@ max_icu_surv_allocation %>%
 ```{r}
 max_icu_surv_allocation %>%
   ggplot(aes(x = age, y = SOFA, color = get_vent)) +
-  geom_point() + labs(color = " ")
+  geom_point() + labs(color = " ") +
+  scale_y_discrete(drop = FALSE)
 ```
 
 \pagebreak
@@ -531,8 +615,8 @@ max_life_years <- function(sim_pop, num_vents){
     arrange(-priority_score) %>% 
     mutate(get_vent = factor(case_when(
       row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
-      row_number() <= num_vents ~ "ventilator (death in ICU)",
-      TRUE ~ "palliative care"), levels = c("ventilator (death in ICU)", "ventilator (survival)", "palliative care"))
+      row_number() <= num_vents ~ "ventilator (death)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
     )
   
   return(allocate)
@@ -568,8 +652,49 @@ max_life_year_allocation %>%
 ```{r}
 max_life_year_allocation%>%
   ggplot(aes(x = age, y = SOFA, color = get_vent)) +
-  geom_point() + labs(color = "")
+  geom_point() + labs(color = "") +
+  scale_y_discrete(drop = FALSE)
 ```
+
+
+## Comparing system performance
+
+```{r }
+
+            systems <- c("Lottery", 
+                         "Youngest First", 
+                         "New York", 
+                         "Maximize ICU Survival", 
+                         "Maximize Life Years Gained")
+
+            lives <- c(lives_saved(lottery_allocation),
+                       young_lives,
+                       ny_lives,
+                       max_icu_lives,
+                       max_lf_lives)
+            
+            life_years <- c(life_years_saved(lottery_allocation),
+                            young_lf,
+                            ny_lf,
+                            max_icu_lf,
+                            max_lf_lf
+            )
+          
+            knitr::kable(
+            tibble(system = systems,
+                   lives = as.numeric(lives), 
+                   life_years = life_years) %>%
+              mutate(
+                   "Survivors" = paste0(lives," (", round(100*lives/tot_patients), "%)"), 
+                   "Life-years saved" = paste0(comma(life_years),
+                                               " (", round(100*life_years/total_life_years), "%)")) %>%
+                select(system, `Survivors`, `Life-years saved`))
+
+
+```
+
+
+
 
 
 ## Maximizing life-years vs. ICU survival
