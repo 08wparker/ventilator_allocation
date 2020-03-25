@@ -15,7 +15,7 @@ library(shinythemes)
 ui <- fluidPage(theme = shinytheme("sandstone"),
     # App title ----
     fluidRow(column(6, h1("Simulating ventilator allocation")), 
-             column(6, tags$img( src = "U_of_shield.png", height = 106, width = 83, align = "center"))),
+             column(6, tags$img( src = "U_of_shield.png", height = 106, width = 83, align = "right"))),
     
     h4(strong("Siva Bhavani, MD"), " William Miller MD, Xuan Han MD, Monica Malec MD, Lainie F Ross MD, PhD, Mark Siegler MD,", strong("William F. Parker MD, MS")),
     p("source code available at", 
@@ -62,26 +62,29 @@ ui <- fluidPage(theme = shinytheme("sandstone"),
     
     
 
-    fluidRow(column(3, h2("Simulated Population"), tags$p("Age distribution from",
-                                                          tags$a(href = "https://www.cdc.gov/mmwr/volumes/69/wr/mm6912e2.htm?s_cid=mm6912e2_w", "CDC Report: Severe Outcomes Among Patients with Coronavirus Disease 2019 (COVID-19) — United States, February 12–March 16, 2020"),
-    )),
-             column(3,sliderInput(inputId = "mean_sofa",
+    fluidRow(column(4, h2("Simulated Population")),
+             column(4,sliderInput(inputId = "mean_sofa",
                                   label = "Mean Sofa Score",
                                   min = 5,
                                   max = 15,
                                   value = 7),
-                    p("SOFA distribution drawn from a truncated normal (range 3-20) with the specified mean and age-mean relationship")),
-                column(3,
+                    p("SOFA distribution drawn from a truncated normal (range 3-20) with the specified mean score for a 65-year old patient")),
+                column(4,
                     sliderInput(inputId = "age_slope",
                                 label = "Age-SOFA relationship",
                                 min = 0,
                                 max = 0.2,
-                                value = 0.1))
+                                value = 0.1),
+                    p("Increase in mean SOFA score for every year of life"))
     ),
     
     hr(),
     
-    fluidRow(column(4, h4("Simulated Age Distribution"), plotOutput("age_dist")),
+    fluidRow(column(4, h4("Simulated Age Distribution"), 
+                    plotOutput("age_dist"),
+                    p("Age distribution from",
+                           tags$a(href = "https://www.cdc.gov/mmwr/volumes/69/wr/mm6912e2.htm?s_cid=mm6912e2_w", "CDC Report: Severe Outcomes Among Patients with Coronavirus Disease 2019 (COVID-19) — United States, February 12–March 16, 2020"))
+                    ),
              column(4, h4("Simulated SOFA Distribution"), plotOutput("sofa_dist")),
              column(4, h4("SOFA distribution by Age"),tableOutput("sofa_age_table"))),
     
