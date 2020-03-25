@@ -10,13 +10,17 @@
 library(shiny)
 library(tidyverse)
 library(truncnorm)
+library(shinythemes)
 
-
-ui <- fluidPage(
+ui <- fluidPage(theme = shinytheme("sandstone"),
     # App title ----
-    titlePanel("Ventilator allocation"),
+    fluidRow(column(6, h1("Simulating ventilator allocation")), 
+             column(6, tags$img( src = "U_of_shield.png", height = 106, width = 83, align = "center"))),
     
-    h4("Siva Bhavani, MD and Will Parker MD, MS, University of Chicago"),
+    h4(strong("Siva Bhavani, MD"), " William Miller MD, Xuan Han MD, Monica Malec MD, Lainie F Ross MD, PhD, Mark Siegler MD,", strong("William F. Parker MD, MS")),
+    p("source code available at", 
+      tags$a(href = "https://github.com/08wparker/ventilator_allocation", 
+             "https://github.com/08wparker/ventilator_allocation")),
     
     hr(),
     
@@ -34,32 +38,39 @@ ui <- fluidPage(
                                       min = 1,
                                       max = 1000,
                                       value = 250),
-                     actionButton("sim", "Simulate"),
+                     actionButton("sim", "Simulate",class = "btn-primary"),
                     hr(),
                     h4("Outcomes by Allocation System"),
-                     tableOutput("table"), width =  5),
+                     tableOutput("table"),
+                    textOutput("total_life_years"),
+            width =  4),
         
     mainPanel(
         h2("Select Allocation System"),
         tabsetPanel(
+                    tabPanel("Sickest First", plotOutput('sickest')),
                     tabPanel("Lottery", plotOutput('lottery')),
+                    tabPanel("New York (SOFA tiers)", plotOutput('ny')),
                     tabPanel("Youngest First", plotOutput('youngest')),
-                    tabPanel("New York", plotOutput('ny')),
-                    tabPanel("SOFA (continuous)", plotOutput('max_icu')),
-                    tabPanel("Maximize Life-Years Gained", 
-                             plotOutput('max_lf')),
+                    tabPanel("Maximize Lives Saved", plotOutput('max_icu')),
+                    tabPanel("Maximize Life-Years Gained", plotOutput('max_lf')),
+                    tabPanel("Compare Systems", plotOutput('combined')),
                     type = "tabs",
-                    selected = "New York"
-        ), width = 7)
+                    selected = "Compare Systems"
+        ), width = 8)
     ),
     
-    hr(),
-    fluidRow(column(3, h2("Simulated Population")),
+    
+
+    fluidRow(column(3, h2("Simulated Population"), tags$p("Age distribution from",
+                                                          tags$a(href = "https://www.cdc.gov/mmwr/volumes/69/wr/mm6912e2.htm?s_cid=mm6912e2_w", "CDC Report: Severe Outcomes Among Patients with Coronavirus Disease 2019 (COVID-19) — United States, February 12–March 16, 2020"),
+    )),
              column(3,sliderInput(inputId = "mean_sofa",
                                   label = "Mean Sofa Score",
                                   min = 5,
                                   max = 15,
-                                  value = 7)),
+                                  value = 7),
+                    p("SOFA distribution drawn from a truncated normal (range 3-20) with the specified mean and age-mean relationship")),
                 column(3,
                     sliderInput(inputId = "age_slope",
                                 label = "Age-SOFA relationship",
@@ -68,9 +79,20 @@ ui <- fluidPage(
                                 value = 0.1))
     ),
     
+    hr(),
+    
     fluidRow(column(4, h4("Simulated Age Distribution"), plotOutput("age_dist")),
              column(4, h4("Simulated SOFA Distribution"), plotOutput("sofa_dist")),
-             column(4, h4("SOFA distribution by Age"),tableOutput("sofa_age_table")))
+             column(4, h4("SOFA distribution by Age"),tableOutput("sofa_age_table"))),
+    
+    hr(),
+    h2("SOFA calibration"),
+    fluidRow(column(6,p(tags$a(href = "https://en.wikipedia.org/wiki/SOFA_score", "The Sequential Organ Failure Assesment (SOFA) score"), 
+                        "is a validated bedside predictor of hospital mortality. The calibration of SOFA scores used in this model is from", 
+                        tags$a(href = "https://jamanetwork.com/journals/jama/fullarticle/2598267", 
+                                            "Prognostic Accuracy of the SOFA Score, SIRS Criteria, and qSOFA Score for In-Hospital Mortality Among Adults With Suspected Infection Admitted to the Intensive Care Unit. Raith et al. JAMA, 2017") 
+    )),
+             column(6,plotOutput("sofa_calib")))
 )
 
 
@@ -94,6 +116,8 @@ cdc_data <- read_csv("cdc_data.csv") %>%
            Age = factor(Age, levels = c("0–19", "20–44", "45–54",
                                         "55–64", "65–74", "75–84",
                                         "≥85")))
+
+## select the "worst case" ICU age distribution from the CDC data
 worst_case <- cdc_data %>%
     select(Age,
            N,
@@ -129,6 +153,7 @@ worst_case <- worst_case %>%
     select(Age, min_age, max_age, pct_icu_pop)
 
 
+# Read in a file containing the SOFA calibration data
 SOFA <- read_csv("SOFA.csv") 
 
 tot_SOFA <- sum(SOFA$N)
@@ -138,12 +163,8 @@ SOFA <- SOFA %>%
            SOFA = factor(SOFA, levels = c(seq(0,19), ">=20")),
            pct_SOFA = N/tot_SOFA)
 
-sd_SOFA <- SOFA %>%
-    uncount(N)
 
-sd_SOFA <- sqrt(var(sd_SOFA$sofa_num))
-
-
+# Main population and SOFA simulation function
 simulate_ICU_pop <- function(df, N = tot_patients, sofa, mean_sofa, sd_sofa = 3.5, age_slope){
     
     probs <- df$pct_icu_pop
@@ -172,7 +193,6 @@ simulate_ICU_pop <- function(df, N = tot_patients, sofa, mean_sofa, sd_sofa = 3.
         
         
         # sample SOFA score- from a truncated normal distribution
-        
         group_mean_sofa <- mean_sofa + age_slope*(min_age - 65)
         
         sofa_scores <- tibble(sofa_num = round(rtruncnorm(n = n_cats, 
@@ -205,6 +225,21 @@ simulate_ICU_pop <- function(df, N = tot_patients, sofa, mean_sofa, sd_sofa = 3.
     
     return(sample %>% select(age_group, age, SOFA, sofa_num, p_surv, alive))
 }
+
+
+# Allocation system code
+sickest_first <- function(sim_pop, num_vents){
+    
+    allocate <- sim_pop %>%
+        arrange(p_surv) %>% 
+        mutate(get_vent = factor(case_when(
+            row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+            row_number() <= num_vents ~ "ventilator (death)",
+            TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
+        )
+    return(allocate)
+}
+
 
 lottery_allocate <- function(sim_pop, num_vents){
     
@@ -290,6 +325,7 @@ max_life_years <- function(sim_pop, num_vents){
 }
 
 
+# Quantification of system results
 lives_saved <- function(allocation){
     allocation %>% filter(get_vent == "ventilator (survival)") %>% nrow()
 }
@@ -304,7 +340,10 @@ life_years_saved <- function(allocation, max_life_span = 100){
 }
 
 
+# parameters for graphs
 text_size <- 14
+
+
 # Define server logic
 server <- function(input, output) {
     
@@ -318,6 +357,10 @@ server <- function(input, output) {
                              age_slope = input$age_slope)
         })
     
+        
+        sickest <- reactive({
+            sickest_first(sim_pop(), input$vents)
+        })
         lottery <- reactive({
             lottery_allocate(sim_pop(), input$vents)
         })
@@ -352,6 +395,19 @@ server <- function(input, output) {
                 geom_histogram(stat = "count", fill = "darkgoldenrod1",color = "black")
         })
     
+        
+        output$sickest <- renderPlot({
+            sickest() %>%
+                ggplot(aes(x = age, y = SOFA, color = get_vent)) +
+                scale_y_discrete(drop = FALSE) +
+                geom_point(size = 3) + labs(color = "", x = "Age") +
+                theme(
+                    legend.text=element_text(size=text_size),
+                    axis.title = element_text(size = text_size),
+                    legend.title = element_text(size = text_size)) 
+            
+        })
+        
         output$lottery <- renderPlot({
                 lottery() %>%
                     ggplot(aes(x = age, y = SOFA, color = get_vent)) +
@@ -415,18 +471,70 @@ server <- function(input, output) {
                       legend.title = element_text(size = text_size))  
         })
         
+        
+        output$combined <- renderPlot({
+            lottery() %>% 
+                mutate(system = "Lottery") %>%
+                select(age, SOFA, get_vent, system) %>%
+                rbind(sickest() %>% 
+                          mutate(system = "Sickest First") %>%
+                          select(age, SOFA, get_vent,  system)) %>%
+                rbind(ny_allocation() %>% 
+                          mutate(system = "New York (SOFA tiers)") %>%
+                          select(age, SOFA, get_vent, system)) %>%
+                rbind(youngest() %>% 
+                          mutate(system = "Youngest First") %>%
+                          select(age, SOFA, get_vent, system)) %>%
+                rbind(max_icu() %>% 
+                          mutate(system = "Maximize Lives Saved")  %>%
+                          select(age, SOFA, get_vent, system)) %>%
+                rbind(max_lf() %>% 
+                          mutate(system = "Maximize life-years saved") %>%
+                          select(age, SOFA, get_vent, system)) %>%
+                mutate(system = factor(system, levels = c("Sickest First",
+                                                          "New York (SOFA tiers)", 
+                                                          "Lottery", 
+                                                          "Maximize Lives Saved", 
+                                                          "Youngest First", 
+                                                          "Maximize life-years saved"))) %>%
+                ggplot(aes(x = age, y = SOFA, color = get_vent)) +
+                geom_point(size = 2) + facet_wrap(~system) + 
+                scale_y_discrete(breaks = c("0", "5", "10", "15", ">=20"))+
+                labs(color = " ", x = "Age") + 
+                theme(legend.position = "bottom",
+                      legend.text=element_text(size=text_size),
+                            axis.text = element_text(size = text_size),
+                            axis.title = element_text(size = text_size),
+                            legend.title = element_text(size = text_size),
+                            strip.text = element_text(size=text_size))
+        })
+        
+        
+        
+        
+        output$total_life_years <- reactive({
+            paste0("The total possible life-years were ", comma(100*input$patients - sum(sim_pop()$age)))
+        })
+        
         output$table <- renderTable({
             
                 total_life_years <- 100*input$patients - sum(sim_pop()$age)
                 
-                systems <- c("Lottery", "Youngest first", "New York", "SOFA (continuous)", "Maximize Life Years")
-                lives <- c(lives_saved(lottery()),
+                systems <- c("Sickest First",
+                             "Lottery", 
+                             "Youngest first", 
+                             "New York (SOFA tiers)", 
+                             "Maximize Lives Saved", 
+                             "Maximize Life Years")
+                lives <- c(lives_saved(sickest()),
+                           lives_saved(lottery()),
                            lives_saved(youngest()),
                            lives_saved(ny_allocation()),
                            lives_saved(max_icu()),
                            lives_saved(max_lf()))
                 
-                life_years <- c(life_years_saved(lottery()),
+                life_years <- c(life_years_saved(sickest()),
+                                life_years_saved(lottery()),
                                 life_years_saved(youngest()),
                                 life_years_saved(ny_allocation()),
                                 life_years_saved(max_icu()),
@@ -448,6 +556,12 @@ server <- function(input, output) {
                 summarise(mean_sofa = round(mean(sofa_num),2),
                           survival = paste0(round(100*mean(p_surv)), "%")) %>%
                 select("Age" = age_group, "Mean SOFA" = mean_sofa, "Survival (with ventilator)" = survival)
+        })
+        
+        output$sofa_calib <- renderPlot({
+            SOFA %>%
+                ggplot(aes(x =SOFA, y = death_pct)) +
+                geom_bar(stat = "Identity") + labs(y = "Mortality (%)")
         })
     })
 }
