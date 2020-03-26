@@ -12,10 +12,13 @@ library(tidyverse)
 library(truncnorm)
 library(shinythemes)
 
+
 ui <- fluidPage(theme = shinytheme("sandstone"),
     # App title ----
-    fluidRow(column(6, h1("Simulating ventilator allocation")), 
-             column(6, tags$img( src = "U_of_shield.png", height = 106, width = 83, align = "right"))),
+    fluidRow(column(9, h1("Simulation of Ventilator Allocation Strategies During the COVID-19 Pandemic")), 
+             column(3, tags$img( src = "U_of_shield.png", height = 106, width = 83, align = "right"))),
+    
+    withMathJax(),
     
     h4(strong("Siva Bhavani, MD"), " William Miller MD, Xuan Han MD, Monica Malec MD, Lainie F Ross MD, PhD, Mark Siegler MD,", strong("William F. Parker MD, MS")),
     p("source code available at", 
@@ -41,23 +44,44 @@ ui <- fluidPage(theme = shinytheme("sandstone"),
                      actionButton("sim", "Simulate",class = "btn-primary"),
                     hr(),
                     h4("Outcomes by Allocation System"),
-                     tableOutput("table"),
+                    tableOutput("table"),
+                    helpText("Life-years saved caculated by $$\\sum_i (100-age_i)$$ for all survivors"),
                     textOutput("total_life_years"),
             width =  4),
         
     mainPanel(
         h2("Select Allocation System"),
         tabsetPanel(
-                    tabPanel("Sickest First", plotOutput('sickest')),
-                    tabPanel("Lottery", plotOutput('lottery')),
-                    tabPanel("New York (SOFA tiers)", plotOutput('ny')),
-                    tabPanel("Youngest First", plotOutput('youngest')),
-                    tabPanel("Maximize Lives Saved", plotOutput('max_icu')),
-                    tabPanel("Maximize Life-Years Gained", plotOutput('max_lf')),
+                    tabPanel("Sickest First", 
+                             plotOutput('sickest'),
+                             helpText("Prioritizing patients with the highest SOFA scores")),
+                    tabPanel("Lottery", 
+                             plotOutput('lottery'),
+                             helpText("Random ventilator assignment")),
+                    tabPanel("New York (SOFA tiers)", 
+                             plotOutput('ny'),
+                             helpText("Random assignment within 3 priority SOFA tiers (SOFA<7, SOFA 8-11, SOFA>11)")),
+                    tabPanel("Youngest First", 
+                             plotOutput('youngest'),
+                             helpText("Ventilator assignment by inverse order of age")),
+                    tabPanel("Maximize Lives Saved", 
+                             plotOutput('max_icu'),
+                             helpText("prioritizing patients with the lowest SOFA scores")),
+                    tabPanel("Maximize Life-Years Gained", 
+                             plotOutput('max_lf'),
+                             helpText("Rank patients based on $$Score = P(survival)*(100 - age)$$")
+                             ),
                     tabPanel("Compare Systems", plotOutput('combined')),
                     type = "tabs",
                     selected = "Compare Systems"
-        ), width = 8)
+        ), 
+        p("Simulated results under varying ventilator triage rules,",
+          strong("Click each tab for details"),
+          "The x-axis is patient age at the time of respiratory failure and the y-axis is patient SOFA score.",
+          "Colors correspond to allocation and outcome.",
+          "Green: allocated a ventilator and survived, Red: allocated a ventilator and died despite treatment,",
+          "Blue: assigned to palliative care (comfort measures) only with no ventilator allocation"),
+        width = 8)
     ),
     
     
@@ -516,7 +540,7 @@ server <- function(input, output) {
         
         
         output$total_life_years <- reactive({
-            paste0("The total possible life-years were ", comma(100*input$patients - sum(sim_pop()$age)))
+            paste0("The total possible life-years of the population = ", comma(100*input$patients - sum(sim_pop()$age)))
         })
         
         output$table <- renderTable({
