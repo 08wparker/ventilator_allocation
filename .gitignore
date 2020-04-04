@@ -1,10 +1,9 @@
 *
 
 !.gitignore
-!*.Rmd
-!*priority_score.pdf
+!analysis.Rmd
 !cdc_data.csv
 
 !SOFA.csv
-!/ventilator_app.R
+!ventilator_app.R
 .Rproj.user
