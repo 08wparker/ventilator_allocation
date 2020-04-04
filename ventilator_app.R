@@ -15,8 +15,8 @@ library(shinythemes)
 
 ui <- fluidPage(theme = shinytheme("sandstone"),
     # App title ----
-    fluidRow(column(9, h1("Simulation of Ventilator Allocation Strategies During the COVID-19 Pandemic")),
-             column(3, tags$img( src = "U_of_shield.png", height = 106, width = 83, align = "right"))),
+    fluidRow(column(9, h1("Simulation of Ventilator Allocation Strategies During the COVID-19 Pandemic"))),
+             #column(3, tags$img( src = "U_of_shield.png", height = 106, width = 83, align = "right"))),
     
     withMathJax(),
     
