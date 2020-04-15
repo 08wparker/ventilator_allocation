@@ -38,10 +38,16 @@ library(cowplot)
 Instruction to alter parameters or run code in R:
 1. Download required packages on R
 2. Line 133: Alter the number of patients to use in the simulation (default 1000)
-3. Line 140-151: The following parameters can be adjusted to reflect institutional variations in SOFA scores:
-	A. sofa_int = mean SOFA score for population of patients requiring intubation
-	B. sd_sofa = standard deviation of SOFA score in this population
-	C. Remainder of parameters reflect relationships between age, comorbidity burden and SOFA score, and can be altered if robust institutional data reflects the need
+3. Line 143-151: The following parameters (A-I) reflect age~comorbidity~SOFA relationships, and should be altered only if robust institutional data reflects the need:
+	A. sofa_int - intercept of SOFA score in regression: SOFA ~ age + (major comorbidity) + (severe comorbidity)
+	B. sd_sofa - standard deviation of SOFA scores in population
+	C. age_slope - increase in SOFA score per unit increase in age in regression: SOFA ~ age + (major comorbidity) + (severe comorbidity)
+	D. major_sofa - increase in SOFA score for major comorbidity burden compared to none in regression: SOFA ~ age + (major comorbidity) + (severe comorbidity)
+	E. severe_sofa - increase in SOFA score for severe comorbidity burden compared to none in regression: SOFA ~ age + (major comorbidity) + (severe comorbidity)
+	F. major_cons - log odds of having major comorbidity compared to none in multinomial regression: Comorbidity burden ~ age
+	G. major_slope - increase in log odds of having major comorbidity compared to none with each year increase in age in multinomial regression: Comorbidity burden ~ age
+	H. severe_cons - log odds of having severe comorbidity compared to none in multinomial regression: Comorbidity burden ~ age
+	I. severe_slope - increase in log odds of having severe comorbidity compared to none with each year increase in age in multinomial regression: Comorbidity burden ~ age
 4. Line 283: Alter the number of simulation runs (default 10000)
 5. Line 299: Alter the number of ventilators available (degree scarcity is the number of ventilators divided by the number of patients - default 0.5. This default for 1000 patients reflects 500 ventilators)
 6. Run all chunks
