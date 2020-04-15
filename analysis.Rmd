@@ -879,12 +879,15 @@ combined_df <- sickest_first %>%
                                             "Youngest first", 
                                             "Maximize lives",
                                             "Maximize life-years")))
+
+
 ```
 
 ## Distribution of lives-saved by system
 ```{r, echo=FALSE}
 lives_saved_plot <- combined_df %>%
   ggplot(aes(x= system, color = system, fill = system, y =  100*lives_saved/tot_patients)) +
+    theme_classic()+
     geom_dotplot(binaxis = "y", 
                stackdir='center', 
                binwidth =  0.012) +
@@ -901,6 +904,7 @@ ggsave("lives_saved.pdf", plot = lives_saved_plot)
 ```{r, echo=FALSE}
 life_year_plot <- combined_df %>%
   ggplot(aes(x= system, color = system, fill = system, y =  100*prop_years_saved)) +
+    theme_classic()+
     geom_dotplot(binaxis = "y", 
                stackdir='center', binwidth = 0.04) +
   theme(axis.text = element_text(angle = 45, hjust = 1)) +
@@ -919,11 +923,34 @@ plot_grid(lives_saved_plot +
           life_year_plot + 
             theme(legend.position = "none") + 
                   labs(y = ""),
-          labels = c("Lives saved", "Life-years saved"))
+          labels = c("  Lives saved", "Life-years saved"))
 
 ggsave("Figure_2.pdf", width = 7, height = 4)
 ```
 
 
+## Table of life and life years comparisons
+```{r, echo=FALSE}
 
+
+lifeyearstotal = c()
+for (i in 1:10000) {
+  lifeyearstotal[i]= sum(max_lf_list[[i]]$life_left)
+}
+lifeyearstotal = round(sum(lifeyearstotal)/10000, digits=0)
+
+knitr::kable(combined_df%>%
+  group_by(system)%>%
+  summarize("Survivors" = round(mean(lives_saved), digits=0), "Survivors (%)" = round(mean(lives_saved)/10, digits=0), "Life-years saved (%)" = round(mean(prop_years_saved)*100, digits=0), "Life-years saved" = round(mean(prop_years_saved)*(lifeyearstotal), digits=0))%>%
+  mutate("Col1" = paste(Survivors, " (", `Survivors (%)`, ")", sep = '')) %>%
+  mutate("Col2" = paste(`Life-years saved`, " (", `Life-years saved (%)`, ")", sep = '')) %>%
+  select(!Survivors)%>%
+  select(!`Survivors (%)`)%>%
+  select(!`Life-years saved`)%>%
+  select(!`Life-years saved (%)`)%>%
+  rename(`Lives Saved`  = Col1)%>%
+  rename(`Life-years Saved`  = Col2)%>%
+  rename(System = system))
+
+```
 
