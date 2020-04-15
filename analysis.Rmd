@@ -142,11 +142,11 @@ simulate_ICU_pop <- function(df,
                              sofa, 
                              sofa_int = 7.008651, 
                              sd_sofa = 2.959331, 
-                             age_slope = .0066036,
+                             age_slope = .008537, 
                              major_sofa = .0603057,
                              severe_sofa = .6066374,
                             major_cons = -0.783942,
-                             major_slope = .0232133,
+                             major_slope = .0066036,
                             severe_cons = -2.398532,
                              severe_slope = .0128016){
   
