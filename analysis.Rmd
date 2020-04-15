@@ -1,11 +1,21 @@
 ---
 title: "Simulation of Ventilator Allocation Strategies During the COVID-19 Pandemic"
-author: "Siva Bhavani, Dwight Miller, Lainie Ross, Susan Han, Monica Malec, Mark Siegler, William Parker"
+author: Siva Bhavani, Dwight Miller, Lainie Ross, Susan Han, Monica Malec, Mark Siegler,
+  William Parker
 output:
   html_notebook:
     toc: yes
     toc_depth: 2
     toc_float: yes
+  word_document:
+    toc: yes
+    toc_depth: '2'
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+  html_document:
+    toc: yes
+    toc_depth: 2
 ---
 
 ```{r setup, include=FALSE}
@@ -37,11 +47,10 @@ comma <- function(x){
 
 
 
-
 ## CDC data source
+The age of the simulated patients are sampled from the age distribution of COVID-19-infected patients as reported by the Centers for Disease Control
 We took data from the CDC report [Severe Outcomes Among Patients with Coronavirus Disease 2019  — United States, February 12–March 16, 2020](https://www.cdc.gov/mmwr/volumes/69/wr/mm6912e2.htm?s_cid=mm6912e2_w)
 
-![](cdc_age_dist.gif)
 
 
 ```{r}
@@ -116,6 +125,8 @@ SOFA %>%
 
 \pagebreak
 ## Simulated ICU population from CDC data distribution
+
+The relationship between age, comorbidities and  SOFA score were derived from a large tertiary care hospital system. The comorbidity burden was categorized as none, major or severe based on a combination of currently utilized priority scores and the value of the AHRQ Elixhauser Co-morbidity Index Score for in-hospital mortality. The comorbidity burden was regressed on the age of the patients, and the SOFA score was regressed on the age and comorbidity burden of the patients. These relationships between age, comorbidity burden and SOFA were used to simulate patient data for the study. 
 
 ```{r}
 set.seed(12345)
