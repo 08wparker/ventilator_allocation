@@ -1,0 +1,815 @@
+---
+title: "Simulation of Ventilator Allocation Strategies During the COVID-19 Pandemic"
+author: Siva Bhavani, Dwight Miller, Lainie Ross, Susan Han, Monica Malec, Mark Siegler,
+  William Parker
+output:
+  html_notebook:
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+  word_document:
+    toc: yes
+    toc_depth: '2'
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+  html_document:
+    toc: yes
+    toc_depth: 2
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r libraries, include=FALSE, cache=FALSE}
+library(tidyverse)
+library(truncnorm)
+library(cowplot)
+library(kimisc)
+library(flextable)
+library(officer)
+
+rm(list = ls())
+```
+
+\pagebreak
+# Create patient sample
+```{r}
+patient_data <- read_csv("patient_pool.csv") 
+patient_data <- patient_data%>%
+  mutate(age_group = ifelse(age < 20, "0-19", NA))%>%
+  mutate(age_group = ifelse(age >= 20 & age<=44, "20-44", age_group))%>%
+  mutate(age_group = ifelse(age >= 45 & age<=54, "45-54", age_group))%>%
+  mutate(age_group = ifelse(age >= 55 & age<=64, "55-64", age_group))%>%
+  mutate(age_group = ifelse(age >= 65 & age<=74, "65-74", age_group))%>%
+  mutate(age_group = ifelse(age >= 75 & age<=84, "75-84", age_group))%>%
+  mutate(age_group = ifelse(age >= 85, ">=85", age_group))
+
+
+```
+
+\pagebreak
+## Sampled ICU population from UofC data 
+```{r}
+tot_patients <- 200
+max_life_span <- 100
+
+
+#degree of scarcity
+num_vents <- tot_patients*0.5
+
+
+set.seed(12345)
+
+sim_pop = sample.rows(patient_data, tot_patients, replace=TRUE)
+
+
+```
+
+## Example simulation
+
+### Age score distribution
+```{r}
+                                      
+sim_pop %>%
+  ggplot(aes(x = age_group, fill = chronic_disease_state)) + geom_histogram(stat = "count")
+
+sim_pop %>%
+  group_by(age_group) %>%
+  summarise(mean_sofa = mean(sofa_num))
+```
+
+
+### SOFA score distribution
+```{r}
+sim_pop %>%
+  ggplot(aes(x = SOFA, fill = chronic_disease_state)) +
+  geom_histogram(stat = "count")
+```
+
+
+## Run 10,000 simulations and save results
+```{r}
+N_samples <- 10000
+
+sample_list <- vector(mode = "list", length = N_samples)
+
+for (n in seq(1:N_samples)) {
+  sample_list[[n]] <- sample.rows(patient_data, tot_patients, replace=TRUE)
+
+}
+
+```
+
+
+
+# Applying triage rules to the samples
+```{r}
+degree_scarcity <- 0.5
+vents <- tot_patients*degree_scarcity
+```
+Now I apply various triage rules under conditions of `r 100*degree_scarcity`% ventilator scarcity. The specific utilitarian performance metrics of these rules are **lives saved** and **life-years saved**. The first goal is to maximize lives saved by giving as many people who will survive with mechanical ventilation access to a mechancial ventilator
+
+$$Lives \space saved = \sum_i (1-y_i)*I\{vent=yes\}$$
+
+Another important ethical consideration is the number of **life-years** saved
+
+$$LifeYears \space saved = \sum_i (1-y_i)*(lifeYears \space remaing)*I\{vent=yes\}$$
+Where each survivor allocated a ventilator is weighted by the maximum number of remaining life-years. Some utilitarians would optimize this quantity over lives-saved.
+
+
+The number of life-years remaining depens on the patient's chronic disease state:
+
+$$lifeYears \space remaining | no \space chronic \space conditions = (100-age)$$
+
+$$lifeYears \space remaining | major \space chronic \space conditions = 0.5*(100-age)$$
+
+$$lifeYears \space remaining | severe \space chronic \space conditions = 1$$
+
+#### Define some helper functions to calculate the number of lives and life-years saved for a given sample under the allocation rule
+```{r}
+lives_saved <- function(allocation){
+  allocation %>% 
+    filter(get_vent == "ventilator (survival)") %>% 
+    nrow()
+}
+
+
+life_years_saved <- function(allocation, max_life_span = 100){
+    df <- allocation %>% 
+        mutate(life_left = case_when(
+               chronic_disease_state == "none" ~ (max_life_span- age),
+               chronic_disease_state == "major" ~ 0.75*(max_life_span-age),
+               chronic_disease_state == "severe" ~ 1
+               )
+        )
+    
+    tot_life_years <- sum(df$life_left)
+    
+     df <- df %>%
+       filter(get_vent == "ventilator (survival)")
+  
+    lf_save <- sum(df$life_left)
+    
+    return(lf_save/tot_life_years)
+}
+
+
+
+allocation_performance <- function(alloc_list){
+  lives <- map_int(alloc_list, lives_saved)
+  lf_years <- map_dbl(alloc_list, life_years_saved)
+
+  return(tibble(lives_saved = lives,
+                prop_years_saved = lf_years))
+}
+```
+
+#### Plot helper functions
+```{r}
+plot_example <- function(df){
+  df %>%
+  ggplot(aes(x = age, y = SOFA, color = get_vent)) +
+  geom_point() + labs(color = "") +
+  scale_y_discrete(drop = FALSE)
+}
+
+
+plot_lives <- function(df){
+  df %>%
+    ggplot(aes(x = lives_saved)) +
+    geom_histogram(binwidth = 10, color = "black", fill = "chartreuse3") + 
+    labs(x = "Lives saved (N)") +
+    lims(x = c(0,200))
+}
+
+
+plot_life_years <- function(df){
+  df %>% 
+    ggplot(aes(x = 100*prop_years_saved)) +
+    geom_histogram(binwidth = 0.5, color = "black", fill = "springgreen4") + 
+    lims(x = c(0,100)) + labs(x = "Percentage of life-years saved") 
+}
+```
+
+
+## Sickest first
+
+"Sickest first" allocation represents the default in american medicine under non-triage conditions. The sickest patients are priortized because the less severely ill patients can wait their turn. In conditions of true scarcity, however, the healthier patients will die while waiting. Therefore "sickest first" is regarded as unacceptably inefficient in terms of lives saved[@_new_; @christian_development_2006; @daughertybiddison_too_2019; @emanuel_fair_2020; @white_who_2009].
+
+```{r}
+sickest_first <- function(sim_pop, num_vents = vents){
+    
+  allocate <- sim_pop %>%
+    arrange(-sofa_num) %>% 
+    mutate(get_vent = factor(case_when(
+      row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+      row_number() <= num_vents ~ "ventilator (death)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death)", 
+                                            "ventilator (survival)", 
+                                            "palliative care"))
+    )
+  return(allocate)
+}
+
+sickest_list <- map(.x = sample_list, sickest_first)
+```
+
+### Example outcome under a sickest-first allocation
+```{r}
+
+plot_example <- function(df){
+  df %>%
+  ggplot(aes(x = age, y = SOFA, color = get_vent)) +
+  geom_point() + labs(color = "") +
+  scale_y_discrete(drop = FALSE)
+}
+
+plot_example(sickest_list[[1]])
+```
+This plot represents the outcome of the allocation procedure as a function of the patient's age (x-axis) and SOFA score (y-axis). The most efficient allocation system from a lives-saved perspective would have as many green dots as possible.
+
+```{r}
+sickest_first <- allocation_performance(sickest_list)
+```
+
+### Distribution of lives saved under a "sickest first" allocation system
+```{r}
+plot_lives(sickest_first)
+```
+Distribution of lives saved during the allocation of under a "sickest first" allocation system that priortizes patients with the highest SOFA score. 
+
+### Distribution of life-years saved under a "sickest first" allocation system
+```{r}
+plot_life_years(sickest_first)
+```
+Distribution of life-years saved during the allocation of under a "sickest first" allocation system that priortizes patients with the highest SOFA score. 
+
+
+
+## NY allocation
+
+The New York allocation scheme (as described above) relies on a categorization of the SOFA score and a lottery within priority tiers.
+```{r}
+ny_allocate <- function(sim_pop,  num_vents = vents){
+  
+  lottery <- runif(n = sim_pop %>% nrow())
+  
+  
+  allocate <- sim_pop %>%
+    cbind(lottery) %>%
+    mutate(triage_cat = case_when(
+      sofa_num < 7 ~ "Highest",
+      sofa_num < 12 ~ "Intermediate",
+      TRUE ~ "No ventilator"
+    ), priority_score = case_when(
+      triage_cat == "Highest" ~ lottery,
+      triage_cat == "Intermediate" ~ 1 + lottery,
+      TRUE ~ 2 + lottery)
+    ) %>%
+    arrange(priority_score) %>%
+    mutate(get_vent = factor(case_when(
+      row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+      row_number() <= num_vents ~ "ventilator (death)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death)", 
+                                            "ventilator (survival)", 
+                                            "palliative care"))
+    )
+  
+  return(allocate)
+  
+  
+}
+
+ny_list <- map(sample_list, ny_allocate)
+```
+
+### Example of NY vent allocation plan
+```{r}
+
+intermediate_high <-(which(levels(ny_list[[1]]$SOFA) == "6")) + 0.5
+
+intermediate_none <-(which(levels(ny_list[[1]]$SOFA) == "11")) + 0.5
+
+ny_list[[1]] %>%
+  ggplot(aes(x = age, y = SOFA, color = get_vent, shape = triage_cat)) +
+  scale_y_discrete(drop = FALSE) +
+  geom_point() + labs(color = " ", shape = "NY triage category") +
+  geom_hline(aes(yintercept = 6.5), linetype = "dashed") +
+  geom_hline(aes(yintercept = 11.5), linetype = "solid")
+
+```
+This plot represents the outcome of the allocation procedure as a function of the patient's age (x-axis) and SOFA score (y-axis). The most efficient allocation system from a lives-saved perspective would have as many green dots as possible.
+
+```{r}
+new_york <- allocation_performance(ny_list)
+```
+
+### Distribution of lives saved under New York (SOFA tiers) allocation plan
+```{r, echo=FALSE}
+plot_lives(new_york)
+```
+Distribution of lives-saved during the allocation of under new york's SOFA tiers + lottery allocation strategy.
+
+### Distribution of life-years saved under New York (SOFA tiers) allocation plan
+```{r, echo=FALSE}
+plot_life_years(new_york)
+```
+Distribution of life-years during the allocation of under new york's SOFA tiers + lottery allocation strategy.
+
+
+## Maryland
+
+This framework uses a combination of SOFA tiers and points for severe chronic disease, with age as a tiebreaker.
+```{r}
+maryland_allocate <- function(sim_pop, num_vents = vents){
+    lottery <- runif(n = sim_pop %>% nrow())
+  
+  allocate <- sim_pop %>%
+    cbind(lottery) %>%
+    mutate(score = case_when(sofa_num < 9 ~ 1,
+                             sofa_num < 12 ~ 2,
+                             sofa_num < 15 ~ 3,
+                             TRUE ~ 4) +
+             case_when(
+                       chronic_disease_state == "severe" ~ 3,
+                       TRUE ~ 0),
+           age_cat_2 = case_when(
+             age < 50 ~ 1,
+             age < 70 ~ 2,
+             age < 85 ~ 3,
+             TRUE ~ 4)
+    ) %>%
+    arrange(score, age_cat_2, lottery) %>%
+    mutate(get_vent = factor(case_when(
+      row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+      row_number() <= num_vents ~ "ventilator (death)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
+    )
+    
+  return(allocate)
+}
+
+maryland_list <- map(sample_list, maryland_allocate)
+
+plot_example(maryland_list[[1]])
+```
+This plot represents the outcome of the allocation procedure as a function of the patient's age (x-axis) and SOFA score (y-axis). The most efficient allocation system from a lives-saved perspective would have as many green dots as possible.
+
+
+```{r}
+maryland <- allocation_performance(maryland_list)
+```
+
+### Distribution of lives saved under Maryland Framework
+```{r}
+plot_lives(maryland)
+```
+Distribution of lives saved during the allocation of under maryland's SOFA tiers+ chronic disaease point system
+
+### Distribution of life-years saved under Maryland Framework
+```{r}
+plot_life_years(maryland)
+```
+Distribution of life-years saved during the allocation of under maryland's SOFA tiers+ chronic disaease point system
+
+
+## Pittsburgh
+
+```{r}
+penn_pitt_allocate <- function(sim_pop, num_vents = vents){
+  
+  lottery <- runif(n = sim_pop %>% nrow())
+  
+  allocate <- sim_pop %>%
+    cbind(lottery) %>%
+    mutate(score = case_when(sofa_num < 6 ~ 1,
+                             sofa_num < 9 ~ 2,
+                             sofa_num < 12 ~ 3,
+                             TRUE ~ 4) +
+             case_when(chronic_disease_state == "major" ~ 2,
+                       chronic_disease_state == "severe" ~ 4,
+                       TRUE ~ 0),
+           age_cat_2 = case_when(
+             age < 41 ~ 1,
+             age < 61 ~ 2,
+             age < 76 ~ 3,
+             TRUE ~ 4)
+    ) %>%
+    arrange(score, age_cat_2, lottery) %>%
+    mutate(get_vent = factor(case_when(
+      row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+      row_number() <= num_vents ~ "ventilator (death)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
+    )
+  
+  return(allocate)
+}
+
+penn_pitt_list <- map(sample_list, penn_pitt_allocate)
+
+penn_pitt <- allocation_performance(penn_pitt_list)
+
+plot_example(penn_pitt_list[[1]])
+```
+
+This plot represents the outcome of the allocation procedure as a function of the patient's age (x-axis) and SOFA score (y-axis). The most efficient allocation system from a lives-saved perspective would have as many green dots as possible.
+
+
+### Distribution of lives saved under Pittsburgh Framework
+```{r}
+plot_lives(penn_pitt)
+```
+Distribution of lives saved during the allocation of under maryland's SOFA tiers+ chronic disaease point system
+
+### Distribution of life-years saved under Pittsburgh Framework
+```{r}
+plot_life_years(penn_pitt)
+```
+Distribution of life-years saved during the allocation of under maryland's SOFA tiers+ chronic disaease point system
+
+
+## Lottery allocation
+
+In lottery allocation, ventilators are assigned randomly without regard to the patient's age or probability of survival
+```{r}
+lottery_allocate <- function(sim_pop, num_vents = vents){
+
+  lottery <- runif(n = sim_pop %>% nrow())
+  
+  allocate <- sim_pop %>%
+    cbind(lottery) %>%
+    arrange(lottery) %>%
+    mutate(get_vent = factor(case_when(
+      row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+      row_number() <= num_vents ~ "ventilator (death)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death)", 
+                                            "ventilator (survival)", 
+                                            "palliative care"))
+    )
+  
+  return(allocate)
+}
+
+lottery_list <- map(sample_list, lottery_allocate)
+```
+
+
+### Example outcome under a random lottery allocation
+```{r, echo=FALSE}
+plot_example(lottery_list[[1]])
+```
+This plot represents the outcome of the allocation procedure as a function of the patient's age (x-axis) and SOFA score (y-axis). The most efficient allocation system from a lives-saved perspective would have as many green dots as possible.
+
+### Distribution of lives saved under a lottery allocation system
+```{r}
+lottery <-allocation_performance(lottery_list)
+
+plot_lives(lottery)
+```
+
+Distribution of lives-saved during the allocation of under a lottery allocation system that assigns ventilators randomly
+
+
+### Distribution of life-years saved under a lottery allocation system
+```{r }
+plot_life_years(lottery)
+```
+Distribution of the percentage of life-years saved during the allocation of under a lottery allocation system that assigns ventilators randomly
+
+
+## Youngest first
+In youngest first allocation, the patients with the lowest age are assigned ventilators first. The severity of illness of the patients are ignored.
+```{r}
+youngest_allocate <- function(sim_pop, num_vents = vents){
+
+  allocate <- sim_pop %>%
+    arrange(age) %>% 
+    mutate(get_vent = factor(case_when(
+      row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+      row_number() <= num_vents ~ "ventilator (death)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death)", 
+                                            "ventilator (survival)", 
+                                            "palliative care"))
+    )
+  
+  return(allocate)
+}
+
+youngest_list <- map(sample_list, youngest_allocate)
+```
+
+
+### Example of youngest-first allocation
+```{r, echo=FALSE}
+plot_example(youngest_list[[1]])
+```
+This plot represents the outcome of the allocation procedure as a function of the patient's age (x-axis) and SOFA score (y-axis). The most efficient allocation system from a lives-saved perspective would have as many green dots as possible.
+
+### Distribution of lives saved under youngest-first allocation
+```{r}
+youngest <- allocation_performance(youngest_list)
+```
+
+```{r, echo=FALSE}
+plot_lives(youngest)
+```
+Distribution of lives-saved during the allocation of under a youngest-first allocation policy.
+
+
+### Distribution of life-years saved under youngest first allocation
+```{r, echo=FALSE}
+plot_life_years(youngest)
+```
+Distribution of life-years during the allocation of under a youngest-first allocation policy.
+
+
+
+
+## Maximizing Lives Saved
+
+An allocation strategy focused on saving the most lives would use the SOFA variable as a continuous predictor, ranking patients so those with the lowest SOFA scores (higher means higher $P(death)$) get ventilators first
+```{r}
+max_icu_surv <- function(sim_pop, num_vents =vents){
+
+  
+  allocate <- sim_pop %>%
+    arrange(sofa_num) %>% 
+    mutate(get_vent = factor(case_when(
+      row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+      row_number() <= num_vents & alive==0~ "ventilator (death)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
+    )
+  return(allocate)
+}
+
+
+max_icu_list <- map(sample_list, max_icu_surv)
+```
+
+### Example of maximizing lives saved
+```{r, echo=FALSE}
+plot_example(max_icu_list[[1]])
+```
+
+```{r}
+max_icu <- allocation_performance(max_icu_list)
+```
+
+### Distribution of lives saved under a maximizing lives saved allocation strategy
+```{r, echo=FALSE}
+plot_lives(max_icu)
+```
+Distribution of lives during the allocation of patients by lowest SOFA score
+
+### Distribution of life-years saved under a maximizing lives saved strategy
+```{r, echo=FALSE}
+plot_life_years(max_icu)
+```
+Distribution of life-years saved during the allocation of patients by lowest SOFA score
+
+
+## Maximizing Life-years gained
+
+Maximizing life-years involves ranking patients by $P(survival)*(100-age)$. This quantity has a direct interpretation as the expected life-years to be saved by treating the patient with mechanical ventilation.
+```{r}
+max_life_years <- function(sim_pop, num_vents = vents, max_life_span = 100){
+  
+  allocate <- sim_pop %>%
+    mutate( life_left = case_when(
+               chronic_disease_state == "none" ~ (max_life_span- age),
+               chronic_disease_state == "major" ~ 0.75*(max_life_span-age),
+               chronic_disease_state == "severe" ~ 1
+               ),
+            priority_score = alive*life_left) %>%
+    arrange(-priority_score) %>% 
+    mutate(get_vent = factor(case_when(
+      row_number() <= num_vents & alive ==1 ~  "ventilator (survival)", 
+      row_number() <= num_vents & alive==0 ~ "ventilator (death)",
+      TRUE ~ "palliative care"), levels = c("ventilator (death)", "ventilator (survival)", "palliative care"))
+    )
+  
+  return(allocate)
+}
+
+
+max_lf_list <- map(sample_list, max_life_years)
+
+
+#SOFA %>%
+#  mutate(survival = 100-death_pct) %>%
+#  filter(sofa_num> 5 & sofa_num < 16) %>%
+#  select(SOFA, survival) %>%
+#  write_csv(path = "SOFA_survival.csv")
+```
+
+```{r, echo=FALSE}
+plot_example(max_lf_list[[1]])
+```
+```{r}
+max_lf <- allocation_performance(max_lf_list)
+```
+
+
+### Distribution of life years saved under life-year maximization allocation
+```{r, echo=FALSE}
+plot_lives(max_lf)
+```
+Distribution of lives saved during the allocation of patients by $Priorty\space Score = P(Survival)*(100-age)$
+
+
+### Distribution of life years saved under life-year maximization allocation
+```{r, echo=FALSE}
+plot_life_years(max_lf)
+```
+Distribution of life-years saved during the allocation of patients by $Priorty\space Score = P(Survival)*(100-age)$
+
+
+
+# Commented out single simulation plot
+```{r}
+example_combined <- max_icu_list[[1]] %>%
+  mutate(system = "Maximize lives") %>%
+  select(system, age, SOFA, get_vent) %>%
+  rbind(lottery_list[[1]] %>% 
+          mutate(system = "Lottery") %>%
+          select(system,age, SOFA, get_vent))%>%
+  rbind(youngest_list[[1]] %>% 
+          mutate(system = "Youngest first") %>% select(system, age, SOFA, get_vent)) %>%
+  rbind(ny_list[[1]] %>% 
+          mutate(system = "New York")%>% select(system, age, SOFA, get_vent))%>%
+  rbind(maryland_list[[1]] %>% 
+          mutate(system = "Maryland") %>% select(system, age, SOFA, get_vent)) %>%
+  rbind(penn_pitt_list[[1]] %>% 
+          mutate(system = "Pittsburgh") %>% select(system, age, SOFA, get_vent)) %>%
+  #rbind(max_icu_list[[1]] %>% 
+   #       mutate(system = "Maximize lives") %>% select(system, age, SOFA, get_vent)) %>% 
+  #rbind(max_lf_list[[1]] %>% 
+   #       mutate(system = "Maximize life-years") %>% select(system, age, SOFA, get_vent)) %>%
+  mutate(system = factor(system, levels = c(
+                                            "Maximize lives",
+                                            "New York", 
+                                            "Maryland",
+                                            "Pittsburgh",
+                                            "Lottery", 
+                                            "Youngest first" 
+                                            #"Maximize lives",
+                                            #"Maximize life-years"
+                                            )))
+
+
+example_combined %>%
+  ggplot(aes(x = age, y = SOFA, color = get_vent)) +
+  geom_point(size =1) + facet_wrap(~system, nrow = 2) +
+  scale_y_discrete(breaks = c("0", "5", "10", "15", ">=20"))+
+  labs(color = " ", x = "Age") +
+  theme(legend.position = "bottom")
+
+
+ggsave("figure_1_sample.png")
+```
+
+
+
+
+# Comparing allocation systems
+```{r, cache =FALSE}
+combined_df <- sickest_first %>%
+  mutate(system = "Sickest first") %>%
+  rbind(lottery %>% mutate(system = "Lottery"))%>%
+  rbind(youngest %>% mutate(system = "Youngest first")) %>%
+  rbind(new_york %>% mutate(system = "New York"))%>%
+  rbind(maryland %>% mutate(system = "Maryland")) %>%
+  rbind(penn_pitt %>% mutate(system = "Pennsylvania")) %>%
+  rbind(max_icu %>% mutate(system = "Maximize lives")) %>% 
+  #rbind(max_icu %>% mutate(system = "Maximize life-years")) %>%
+  mutate(system = factor(system, levels = c(#"Sickest first",
+                                            "Lottery", 
+                                            "New York", 
+                                            "Maryland",
+                                            "Pennsylvania",
+                                            "Youngest first", 
+                                            "Maximize lives"
+                                            #"Maximize life-years"
+                                            )))%>%
+  filter(!is.na(system))
+
+
+```
+
+## Distribution of lives-saved by system
+```{r, echo=FALSE}
+lives_saved_plot <- combined_df %>%
+  ggplot(aes(x= system, color = system, fill = system, y =  100*lives_saved/tot_patients)) +
+    theme_classic()+
+    geom_dotplot(binaxis = "y", 
+               stackdir='center', 
+               binwidth =  0.005) +
+  theme(axis.text = element_text(angle = 45, hjust = 1)) +
+  labs(x = "", y = "Lives saved (%)") + lims(y = c(25, 75))
+
+lives_saved_plot
+
+ggsave("lives_saved.pdf", plot = lives_saved_plot)
+```
+
+
+## Distribution of life-years saved by system
+```{r, echo=FALSE}
+life_year_plot <- combined_df %>%
+  ggplot(aes(x= system, color = system, fill = system, y =  100*prop_years_saved)) +
+    theme_classic()+
+    geom_dotplot(binaxis = "y", 
+               stackdir='center', binwidth = 0.04) +
+  theme(axis.text = element_text(angle = 45, hjust = 1)) +
+  labs(x = "", y = "Life-years saved (%)")+ lims(y = c(25, 75))
+
+life_year_plot
+
+ggsave("life_years_saved.pdf", plot = life_year_plot)
+```
+
+
+```{r}
+plot_grid(lives_saved_plot + 
+            theme(legend.position = "none") +
+            labs(y = "Percentage (%)"), 
+          life_year_plot + 
+            theme(legend.position = "none") + 
+                  labs(y = ""),
+          labels = c("  Lives saved", "Life-years saved"),
+          vjust = 1)
+
+ggsave("Figure_2.png", width = 7, height = 4)
+```
+
+
+## Table of life and life years comparisons
+```{r, echo=FALSE}
+
+
+lifeyearstotal = c()
+for (i in 1:N_samples) {
+  lifeyearstotal[i]= sum(max_lf_list[[i]]$life_left)
+}
+lifeyearstotal = round(sum(lifeyearstotal)/N_samples, digits=0)
+
+med = function(v)
+{
+a=  paste(median(v), " (", p25(v), "-", p75(v), ")", sep = "")
+return(a)
+}
+
+
+knitr::kable(combined_df%>%
+  group_by(system)%>%
+  summarize("Survivors" = round(mean(lives_saved), digits=0), 
+            #"Survivors (%)" = med(lives_saved), 
+            "Survivors (%)" = round((mean(lives_saved)/tot_patients)*100, digits=1), 
+            "Life-years saved (%)" = round(mean(prop_years_saved)*100, digits=0), 
+            "Life-years saved" = round(mean(prop_years_saved)*(lifeyearstotal), digits=0))%>%
+  mutate("Col1" = paste(Survivors, " (", `Survivors (%)`, ")", sep = '')) %>%
+  mutate("Col2" = paste(`Life-years saved`, " (", `Life-years saved (%)`, ")", sep = '')) %>%
+  select(!Survivors)%>%
+  select(!`Survivors (%)`)%>%
+  select(!`Life-years saved`)%>%
+  select(!`Life-years saved (%)`)%>%
+  rename(`Lives Saved`  = Col1)%>%
+  rename(`Life-years Saved`  = Col2)%>%
+  rename(System = system)%>%
+  select(`System`, `Lives Saved`, everything()))
+
+
+
+table1 = combined_df%>%
+  group_by(system)%>%
+  summarize("Survivors" = round(mean(lives_saved), digits=0), 
+            "Survivors (%)" = round((mean(lives_saved)/tot_patients)*100, digits=1), 
+            "Life-years saved (%)" = round(mean(prop_years_saved)*100, digits=0), 
+            "Life-years saved" = round(mean(prop_years_saved)*(lifeyearstotal), digits=0))%>% 
+  mutate("Col1" = paste(Survivors, " (", `Survivors (%)`, ")", sep = '')) %>%
+  mutate("Col2" = paste(`Life-years saved`, " (", `Life-years saved (%)`, ")", sep = '')) %>%
+  select(!Survivors)%>%
+  select(!`Survivors (%)`)%>%
+  select(!`Life-years saved`)%>%
+  select(!`Life-years saved (%)`)%>%
+  rename(`Lives Saved`  = Col1)%>%
+  rename(`Life-years Saved`  = Col2)%>%
+  rename(System = system)%>%
+  select(`System`, `Lives Saved`, everything())
+
+myft <- flextable(
+  table1)
+myft = align(myft, align = "left")
+myft = autofit(myft)
+myft = align(myft, align = "left", part = "header")
+
+
+save_as_docx("Table1" = myft, path = "Table1.docx")
+
+
+
+```
+
